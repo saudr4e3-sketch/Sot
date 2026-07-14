@@ -1,0 +1,101 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* MASTER DIRECTIVE: Visual System Compliance */
+:root {
+  /* Carbon Black & Deep Navy Background */
+  --color-dark-bg: #0F1419;
+  --color-dark-bg-alt: #1A1F2E;
+  --color-dark-card: #2C2C3E;
+  /* Muted Terracotta - Primary Action */
+  --color-accent-terracotta: #D4714D;
+  --color-accent-terracotta-hover: #E88561;
+  /* Text Colors */
+  --color-text-primary: #E8E8E8;
+  --color-text-secondary: #A0A0A0;
+}
+
+/* Global Styles */
+* {
+  @apply transition-colors duration-200;
+}
+
+body {
+  @apply bg-dark-bg text-text-primary font-sans antialiased;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-dark-bg-alt;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-accent-terracotta rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-accent-terracotta-hover;
+}
+
+/* Card Component Base */
+.card {
+  @apply bg-dark-card rounded-card shadow-card transition-all duration-200;
+}
+
+.card:hover {
+  @apply shadow-card-hover;
+}
+
+/* Button Components - Muted Terracotta Primary */
+.btn-primary {
+  @apply px-4 py-2 bg-accent-terracotta hover:bg-accent-terracotta-hover text-white rounded-btn font-semibold transition-all shadow-btn hover:shadow-lg;
+}
+
+.btn-primary:active {
+  @apply transform scale-95;
+}
+
+.btn-primary:disabled {
+  @apply opacity-50 cursor-not-allowed hover:bg-accent-terracotta;
+}
+
+.btn-secondary {
+  @apply px-4 py-2 bg-dark-card hover:bg-dark-bg-alt border-2 border-accent-terracotta text-accent-terracotta rounded-btn font-semibold transition-all;
+}
+
+.btn-tertiary {
+  @apply px-4 py-2 bg-transparent hover:bg-dark-card text-text-secondary hover:text-text-primary rounded-btn font-semibold transition-all;
+}
+
+/* Input Styling */
+input, textarea {
+  @apply bg-dark-bg-alt border border-dark-card text-text-primary placeholder-text-muted rounded-input px-3 py-2 focus:outline-none focus:border-accent-terracotta focus:ring-2 focus:ring-accent-terracotta/50 transition-all;
+}
+
+/* Animations */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  @apply inline-block animate-spin;
+}
+
+/* Responsive Utilities */
+@media (max-width: 640px) {
+  body {
+    @apply text-sm;
+  }
+}
