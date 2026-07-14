@@ -1,0 +1,179 @@
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+import json
+import logging
+import asyncio
+from typing import Dict, Set
+from uuid import uuid4
+
+from app.game.auction import AuctionManager
+from app.game.match_engine import MatchEngine
+from app import schemas
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# Active WebSocket connections
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+        self.sessions: Dict[str, AuctionManager] = {}
+    
+    async def connect(self, websocket: WebSocket, connection_id: str):
+        await websocket.accept()
+        self.active_connections[connection_id] = websocket
+        logger.info(f"Client connected: {connection_id}")
+    
+    async def disconnect(self, connection_id: str):
+        if connection_id in self.active_connections:
+            del self.active_connections[connection_id]
+        logger.info(f"Client disconnected: {connection_id}")
+    
+    async def broadcast(self, data: dict, session_id: str = None):
+        """Broadcast message to all connections or specific session"""
+        if session_id:
+            # Find connections for this session
+            for conn_id, websocket in self.active_connections.items():
+                if session_id in conn_id:
+                    try:
+                        await websocket.send_json(data)
+                    except Exception as e:
+                        logger.error(f"Error sending to {conn_id}: {e}")
+        else:
+            # Broadcast to all
+            for websocket in self.active_connections.values():
+                try:
+                    await websocket.send_json(data)
+                except Exception as e:
+                    logger.error(f"Error broadcasting: {e}")
+
+manager = ConnectionManager()
+
+@router.websocket("/game/{session_id}/{player_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: str):
+    """WebSocket endpoint for real-time game communication
+    
+    Args:
+        websocket: WebSocket connection
+        session_id: Game session ID
+        player_id: Player identifier
+    """
+    connection_id = f"{session_id}_{player_id}"
+    await manager.connect(websocket, connection_id)
+    
+    try:
+        while True:
+            data = await websocket.receive_json()
+            action = data.get("action")
+            
+            if action == "start_auction":
+                await handle_start_auction(websocket, session_id, player_id, data)
+            elif action == "place_bid":
+                await handle_place_bid(websocket, session_id, player_id, data)
+            elif action == "skip_bid":
+                await handle_skip_bid(websocket, session_id, player_id, data)
+            elif action == "start_match":
+                await handle_start_match(websocket, session_id, player_id, data)
+            else:
+                await websocket.send_json({"error": f"Unknown action: {action}"})
+    
+    except WebSocketDisconnect:
+        await manager.disconnect(connection_id)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        await manager.disconnect(connection_id)
+
+async def handle_start_auction(websocket: WebSocket, session_id: str, player_id: str, data: dict):
+    """Handle auction start"""
+    opponent_id = data.get("opponent_id")
+    
+    # Create auction manager
+    auction = AuctionManager(session_id, player_id, opponent_id)
+    manager.sessions[session_id] = auction
+    
+    # Start auction
+    state = auction.start_auction()
+    
+    # Broadcast to both players
+    await manager.broadcast({
+        "type": "auction_started",
+        "data": state
+    }, session_id)
+    
+    logger.info(f"Auction started for session {session_id}")
+
+async def handle_place_bid(websocket: WebSocket, session_id: str, player_id: str, data: dict):
+    """Handle bid placement"""
+    amount = data.get("amount")
+    
+    auction = manager.sessions.get(session_id)
+    if not auction:
+        await websocket.send_json({"error": "Auction not found"})
+        return
+    
+    # Place bid
+    success, state = auction.place_bid(player_id, amount)
+    
+    if success:
+        await manager.broadcast({
+            "type": "bid_placed",
+            "player_id": player_id,
+            "amount": amount,
+            "data": state
+        }, session_id)
+    else:
+        await websocket.send_json({
+            "error": state.get("error", "Bid failed"),
+            "type": "bid_failed"
+        })
+
+async def handle_skip_bid(websocket: WebSocket, session_id: str, player_id: str, data: dict):
+    """Handle skip action"""
+    auction = manager.sessions.get(session_id)
+    if not auction:
+        await websocket.send_json({"error": "Auction not found"})
+        return
+    
+    # Skip bid
+    success, state = auction.skip_bid(player_id)
+    
+    if success:
+        if "auction_completed" in state:
+            await manager.broadcast({
+                "type": "auction_completed",
+                "data": state
+            }, session_id)
+        else:
+            await manager.broadcast({
+                "type": "turn_skipped",
+                "player_id": player_id,
+                "data": state
+            }, session_id)
+    else:
+        await websocket.send_json({
+            "error": state.get("error", "Skip failed"),
+            "type": "skip_failed"
+        })
+
+async def handle_start_match(websocket: WebSocket, session_id: str, player_id: str, data: dict):
+    """Handle match start"""
+    auction = manager.sessions.get(session_id)
+    if not auction:
+        await websocket.send_json({"error": "Auction not found"})
+        return
+    
+    # Get team compositions
+    player1_team = auction.player1_team
+    player2_team = auction.player2_team
+    
+    # Simulate match
+    match_engine = MatchEngine(player1_team, player2_team)
+    match_result = match_engine.simulate_match()
+    
+    # Broadcast match result
+    await manager.broadcast({
+        "type": "match_completed",
+        "data": match_result
+    }, session_id)
+    
+    logger.info(f"Match simulated for session {session_id}")
