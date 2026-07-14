@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: osm-fut-backend
+    env: docker
+    repo: https://github.com/saudr4e3-sketch/Sot
+    branch: main
+    
+    dockerfilePath: ./Dockerfile
+    dockerfile:
+      buildArgs:
+        - BUILDKIT_INLINE_CACHE=1
+    
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
+      - key: ENVIRONMENT
+        value: production
+      - key: PORT
+        value: "8000"
+    
+    plan: standard
+    numInstances: 1
+    
+    healthCheckPath: /health
+    healthCheckInterval: 30
+    
+    autoDeploy: true
+    
+    preDeployCommand: ""
+    
+    disk:
+      name: render-data
+      mountPath: /data
+      sizeGB: 1
+
+databases:
+  - name: sot-postgres
+    engine: postgres
+    version: "15"
+    plan: standard
