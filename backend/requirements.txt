@@ -1,5 +1,7 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
+gunicorn==21.2.0
+wheel==0.41.2
 python-socketio==5.9.0
 python-dotenv==1.0.0
 psycopg2-binary==2.9.9
@@ -8,7 +10,6 @@ pydantic==2.5.0
 pydantic-settings==2.1.0
 requests==2.31.0
 aiohttp==3.9.1
-Pillow==10.1.0
+Pillow-SIMD==10.1.0.post1
 python-multipart==0.0.6
-cors==1.0.1
 httpx==0.25.1
