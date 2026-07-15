@@ -13,6 +13,11 @@ from app.utils.constants import CORS_ORIGINS
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- أدوات التشخيص (ستظهر في الـ Logs) ---
+print(f"--- DEBUG: Current Working Directory (os.getcwd()): {os.getcwd()} ---")
+print(f"--- DEBUG: Files in current directory: {os.listdir(os.getcwd())} ---")
+# ------------------------------------------
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🎮 OSM FUT Dual Battle Server Starting...")
@@ -26,7 +31,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -35,15 +39,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- التعديل المعتمد ---
-# البقاء في مجلد app الحالي للوصول إلى المجلد الفرعي static
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
+# --- المسار المصحح للتشغيل الفعلي ---
+# بناءً على أن العمل من /app والملفات داخل app/static
+STATIC_DIR = os.path.join(os.getcwd(), "app", "static")
 
-# تحميل المجلد مع التأكد من وجوده
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-    logger.info(f"✅ Static files successfully mounted from: {STATIC_DIR}")
+    logger.info(f"✅ Static files mounted from: {STATIC_DIR}")
 else:
     logger.warning(f"⚠️ Static directory NOT found at: {STATIC_DIR}")
 
@@ -53,20 +55,9 @@ app.include_router(websocket.router, prefix="/api/ws", tags=["websocket"])
 
 @app.get("/")
 async def root():
-    return {
-        "message": "OSM FUT Dual Battle API",
-        "version": "1.0.0",
-        "developer": "Saud Yahya Al-Faifi",
-        "contact": "0535103986",
-        "status": "operational"
-    }
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "message": "Server is running"}
+    return {"message": "OSM FUT Dual Battle API", "status": "operational"}
 
 if __name__ == "__main__":
     import uvicorn
-    # استخدام المنفذ الذي يوفره Render
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
