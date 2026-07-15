@@ -17,6 +17,9 @@ COPY backend/ .
 # إنشاء المجلد يدوياً لضمان عدم حدوث خطأ Runtime عند التشغيل
 RUN mkdir -p /app/app/static
 
+# إضافة هذا السطر لإصلاح خطأ ModuleNotFoundError
+ENV PYTHONPATH=/app
+
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
