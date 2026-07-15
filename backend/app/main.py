@@ -44,9 +44,13 @@ app.add_middleware(
 )
 
 # Serve static files from backend/app/static at the /static URL
-# Place your images under backend/app/static/ (e.g., backend/app/static/players/<file>)
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# تعديل آمن: التحقق من وجود المجلد قبل محاولة تحميله لمنع توقف السيرفر
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+else:
+    logger.warning(f"Static directory not found at {STATIC_DIR}, skipping static files mount.")
 
 # Include routers
 app.include_router(players.router, prefix="/api/players", tags=["players"])
