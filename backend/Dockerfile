@@ -1,7 +1,7 @@
 # backend/Dockerfile
 FROM python:3.10-slim
 
-# ضبط مسار العمل الأساسي
+# ضبط مسار العمل الأساسي داخل الحاوية
 WORKDIR /app
 
 # نسخ ملف المتطلبات من مجلد backend
@@ -20,5 +20,5 @@ ENV PORT=8080
 
 EXPOSE 8080
 
-# تشغيل التطبيق (بما أن ملفاتك في backend/app/main.py)
+# تشغيل التطبيق
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
