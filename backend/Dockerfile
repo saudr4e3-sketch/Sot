@@ -11,11 +11,8 @@ COPY backend/requirements.txt ./requirements.txt
 RUN python -m pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy backend folder
+# Copy backend folder content directly to /app
 COPY backend/ .
-
-# إنشاء المجلد مع إعطاء صلاحيات كاملة
-RUN mkdir -p /app/app/static && chmod -R 777 /app/app/static
 
 # ضبط مسار بايثون ليعرف مكان المجلد app
 ENV PYTHONPATH=/app
