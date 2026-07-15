@@ -1,18 +1,23 @@
 # backend/Dockerfile
 FROM python:3.10-slim
 
-# Set a project working dir
+# ضبط مسار العمل الأساسي
 WORKDIR /app
 
-# Copy requirements relative to repo root
-COPY backend/requirements.txt ./requirements.txt
+# نسخ ملف المتطلبات من المسار النسبي الصحيح
+# إذا كان Render يبدأ من مجلد backend، فهذا السطر سيعمل
+# إذا كان يبدأ من الجذر، فهذا السطر سيعمل أيضاً
+COPY requirements.txt ./requirements.txt
 
-# Install dependencies
+# تثبيت المكتبات
 RUN python -m pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy backend folder content directly to /app
-COPY backend/ .
+# نسخ كل شيء من المجلد الحالي إلى /app
+COPY . .
+
+# إنشاء المجلد مع إعطاء صلاحيات كاملة
+RUN mkdir -p /app/app/static && chmod -R 777 /app/app/static
 
 # ضبط مسار بايثون ليعرف مكان المجلد app
 ENV PYTHONPATH=/app
