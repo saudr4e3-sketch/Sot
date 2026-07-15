@@ -43,14 +43,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static files from backend/app/static at the /static URL
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+# تحديد المسار المطلق بشكل آمن
+STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
 
 # حماية آمنة: تحميل المجلد فقط إذا كان موجوداً
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    logger.info(f"Static files mounted from {STATIC_DIR}")
 else:
-    logger.warning(f"Static directory not found at {STATIC_DIR}, skipping static files mount.")
+    logger.warning(f"Static directory NOT found at {STATIC_DIR}. Skipping.")
 
 # Include routers
 app.include_router(players.router, prefix="/api/players", tags=["players"])
@@ -73,6 +74,6 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    # التعديل هنا: قراءة المنفذ من متغير البيئة الذي يوفره Render، أو استخدام 8000 كبديل
+    # استخدام المنفذ الذي يوفره Render
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
