@@ -3,9 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
 from dotenv import load_dotenv
-import json
 import logging
-
 from fastapi.staticfiles import StaticFiles
 
 from app.api import players, websocket
@@ -43,15 +41,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# تحديد المسار المطلق بشكل آمن
-STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
+# --- تعديل ذكي للمسار ---
+# البحث عن مجلد static في المجلد الرئيسي للمشروع بغض النظر عن مكان ملف app.py
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 # حماية آمنة: تحميل المجلد فقط إذا كان موجوداً
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-    logger.info(f"Static files mounted from {STATIC_DIR}")
+    logger.info(f"✅ Static files successfully mounted from: {STATIC_DIR}")
 else:
-    logger.warning(f"Static directory NOT found at {STATIC_DIR}. Skipping.")
+    logger.warning(f"⚠️ Static directory NOT found at: {STATIC_DIR}. Please check your folder structure!")
 
 # Include routers
 app.include_router(players.router, prefix="/api/players", tags=["players"])
