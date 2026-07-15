@@ -12,9 +12,9 @@ RUN python -m pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy backend folder (includes app/ and static assets under backend/app/static/)
-COPY backend ./backend
+COPY backend/ .
 
-WORKDIR /app/backend
+WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
