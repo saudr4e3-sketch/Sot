@@ -14,6 +14,9 @@ RUN python -m pip install --upgrade pip && \
 # Copy backend folder (includes app/ and static assets under backend/app/static/)
 COPY backend/ .
 
+# إنشاء المجلد يدوياً لضمان عدم حدوث خطأ Runtime عند التشغيل
+RUN mkdir -p /app/app/static
+
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
