@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 import json
 import logging
 
+from fastapi.staticfiles import StaticFiles
+
 from app.api import players, websocket
 from app.game.auction import AuctionManager
 from app.utils.constants import CORS_ORIGINS
@@ -40,6 +42,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve static files from backend/app/static at the /static URL
+# Place your images under backend/app/static/ (e.g., backend/app/static/players/<file>)
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Include routers
 app.include_router(players.router, prefix="/api/players", tags=["players"])
