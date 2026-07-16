@@ -4,6 +4,10 @@ const path = require('path');
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
+  // هذا السطر هو الحل الجذري لمنع الـ Hang أثناء البناء
+  typescript: {
+    tsconfigPath: './tsconfig.json',
+  },
   images: {
     remotePatterns: [
       {
