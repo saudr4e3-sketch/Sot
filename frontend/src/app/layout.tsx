@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
-// قمت بتغيير المسار هنا من './' إلى '../' ليخرج من مجلد app إلى المجلد الرئيسي src
-import '../styles/globals.css'
+// تم تعديل المسار لاستخدام Alias الموجه لـ src مباشرةً
+import '@/styles/globals.css'
 
 export const metadata: Metadata = {
   title: 'OSM FUT Dual Battle - 1v1 Football Auction Game',
