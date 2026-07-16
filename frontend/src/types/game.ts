@@ -64,8 +64,11 @@ export interface Commentary {
 
 export interface GameMessage {
   type: string
-  data: any
+  action?: string
+  data?: any
   player_id?: string
   amount?: number
+  session_id?: string
+  opponent_id?: string
   error?: string
 }
