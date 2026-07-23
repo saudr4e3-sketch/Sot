@@ -3,87 +3,95 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameMessage } from '@/types/game'
 
-// تحديد الرابط تلقائياً بناءً على بيئة التشغيل (محلي أو رندر)
-const getWsUrl = () => {
-  if (typeof window !== 'undefined') {
-    const host = window.location.host
-    if (host.includes('localhost') || host.includes('127.0.0.1')) {
-      return 'ws://localhost:8000'
-    }
-    // إذا كان الموقع يعمل على رندر، استخدم نفس النطاق الحالي للباك إند أو الرابط المباشر
-    return process.env.NEXT_PUBLIC_WS_URL || `wss://${host}`
-  }
-  return process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
-}
-
-interface UseWebSocketProps {
-  sessionId: string
-  playerId: string
-  onMessage?: (message: GameMessage) => void
-  onConnect?: () => void
-  onDisconnect?: () => void
-}
-
 export const useWebSocket = ({
   sessionId,
   playerId,
   onMessage,
   onConnect,
   onDisconnect,
-}: UseWebSocketProps) => {
+}: {
+  sessionId: string
+  playerId: string
+  onMessage?: (message: GameMessage) => void
+  onConnect?: () => void
+  onDisconnect?: () => void
+}) => {
   const socketRef = useRef<WebSocket | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Connect to WebSocket
   useEffect(() => {
     if (!sessionId || !playerId) return
 
-    const connectSocket = async () => {
+    const connectSocket = () => {
       try {
-        const baseUrl = getWsUrl()
-        const protocol = baseUrl.startsWith('https') || baseUrl.startsWith('wss') ? 'wss' : 'ws'
-        const host = baseUrl.replace(/^https?:\/\//, '').replace(/^wss?:\/\//, '')
-        const wsUrl = `${protocol}://${host}/api/ws/game/${sessionId}/${playerId}`
+        // تحديد الرابط والبروتوكول تلقائياً بما يتوافق مع Render وجلساطه الآمنة
+        const isLocal = window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1')
         
-        console.log('[WebSocket] Connecting to:', wsUrl)
-        const ws = new WebSocket(wsUrl)
-        
-        ws.onopen = () => {
-          console.log('[WebSocket] ✅ Connected')
-          setIsConnected(true)
-          setError(null)
-          onConnect?.()
-        }
-        
-        ws.onmessage = (event) => {
-          try {
-            const message = JSON.parse(event.data)
-            console.log('[WebSocket] 📨 Message:', message.type)
-            onMessage?.(message)
-          } catch (err) {
-            console.error('[WebSocket] ❌ Parse error:', err)
+        let wsProtocol = isLocal ? 'ws' : 'wss'
+        let backendHost = isLocal ? 'localhost:8000' : window.location.host
+
+        // إذا كان هناك متغير بيئة مخصص للباك إند
+        const envUrl = process.env.NEXT_PUBLIC_WS_URL
+        if (envUrl) {
+          if (envUrl.startsWith('https://')) {
+            backendHost = envUrl.replace('https://', '')
+            wsProtocol = 'wss'
+          } else if (envUrl.startsWith('http://')) {
+            backendHost = envUrl.replace('http://', '')
+            wsProtocol = 'ws'
+          } else if (envUrl.startsWith('wss://') || envUrl.startsWith('ws://')) {
+            // لو كان مكتوب جاهز بالبروتوكول
+            const wsUrlFull = `${envUrl}/api/ws/game/${sessionId}/${playerId}`
+            console.log('[WebSocket] Connecting to:', wsUrlFull)
+            var ws = new WebSocket(wsUrlFull)
+            setupWs(ws)
+            return
           }
         }
-        
-        ws.onerror = (event) => {
-          const errorMsg = 'WebSocket connection error'
-          console.error('[WebSocket] ❌', errorMsg, event)
-          setError(errorMsg)
-        }
-        
-        ws.onclose = () => {
-          console.log('[WebSocket] ❌ Disconnected')
-          setIsConnected(false)
-          onDisconnect?.()
-        }
-        
-        socketRef.current = ws
+
+        const wsUrl = `${wsProtocol}://${backendHost}/api/ws/game/${sessionId}/${playerId}`
+        console.log('[WebSocket] Connecting to:', wsUrl)
+        var ws = new WebSocket(wsUrl)
+        setupWs(ws)
+
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : 'Connection failed'
         setError(errorMsg)
         console.error('[WebSocket] Connection error:', err)
       }
+    }
+
+    const setupWs = (ws: WebSocket) => {
+      ws.onopen = () => {
+        console.log('[WebSocket] ✅ Connected')
+        setIsConnected(true)
+        setError(null)
+        onConnect?.()
+      }
+      
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data)
+          console.log('[WebSocket] 📨 Message:', message.type)
+          onMessage?.(message)
+        } catch (err) {
+          console.error('[WebSocket] ❌ Parse error:', err)
+        }
+      }
+      
+      ws.onerror = (event) => {
+        console.error('[WebSocket] ❌ Error event:', event)
+        setError('WebSocket connection error')
+      }
+      
+      ws.onclose = () => {
+        console.log('[WebSocket] ❌ Disconnected')
+        setIsConnected(false)
+        onDisconnect?.()
+      }
+      
+      socketRef.current = ws
     }
 
     connectSocket()
@@ -95,7 +103,6 @@ export const useWebSocket = ({
     }
   }, [sessionId, playerId, onMessage, onConnect, onDisconnect])
 
-  // Send message
   const send = useCallback((message: GameMessage) => {
     if (socketRef.current && isConnected) {
       socketRef.current.send(JSON.stringify(message))
