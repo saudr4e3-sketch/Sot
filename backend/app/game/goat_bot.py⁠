@@ -1,0 +1,40 @@
+import random
+
+class GoatBot:
+    def __init__(self):
+        self.name = "Goat 🐐"
+        self.strategy = "aggressive"
+
+    def decide_bid(self, current_bid: int, player_rating: int, max_budget: int) -> int:
+        """
+        منطق مزايدة بوت Goat بناءً على تقييم اللاعب والميزانية الحالية
+        """
+        if current_bid >= max_budget:
+            return 0  # انسحب إذا تجاوزت الميزانية
+            
+        # إذا كان اللاعب ممتازاً، يزايد بقوة ذكية
+        if player_rating >= 85:
+            increment = random.randint(3, 8)
+        else:
+            increment = random.randint(1, 4)
+            
+        next_bid = current_bid + increment
+        if next_bid > max_budget:
+            return max_budget
+            
+        return next_bid
+
+    def select_mystery_card(self):
+        """
+        احتمالات بطاقات الغموض الخاصة بـ Goat (مطابقة لقواعد اللعبة)
+        30% أسطوري، 30% متوسط، 40% ضعيف
+        """
+        roll = random.random()
+        if roll < 0.3:
+            return {"tier": "Legendary", "rating": 92}
+        elif roll < 0.6:
+            return {"tier": "Medium", "rating": 83}
+        else:
+            return {"tier": "Weak", "rating": 75}
+
+goat_ai = GoatBot()
