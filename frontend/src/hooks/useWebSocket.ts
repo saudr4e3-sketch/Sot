@@ -101,7 +101,6 @@ export const useWebSocket = ({
       setIsConnected(false)
       onDisconnect?.()
 
-      // محاولة إعادة الاتصال التلقائي إذا لم يتم الإغلاق بشكل يدوي
       if (!isManuallyClosedRef.current && connectionAttempts < reconnectAttempts) {
         console.log(`[WebSocket Hook] 🔄 Attempting to reconnect (${connectionAttempts + 1}/${reconnectAttempts})...`)
         reconnectTimeoutRef.current = setTimeout(() => {
@@ -134,7 +133,7 @@ export const useWebSocket = ({
       socketRef.current.send(JSON.stringify(message))
       console.log('[WebSocket Hook] 📤 Message sent successfully:', message.type)
     } else {
-      console.warn('[WebSocket Hook]رياضيات ⚠️ Cannot send message, socket is not open. Current state:', socketRef.current?.readyState)
+      console.warn('[WebSocket Hook] ⚠️ Cannot send message, socket is not open. Current state:', socketRef.current?.readyState)
     }
   }, [])
 
