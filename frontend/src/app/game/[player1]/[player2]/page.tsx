@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { useGameStore } from '@/store/gameStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { AuctionState, GameMessage } from '@/types/game'
+import { GameMessage } from '@/types/game'
 import AuctionTimer from '@/components/game/AuctionTimer'
 import AuctionProgress from '@/components/game/AuctionProgress'
 import CommentaryView from '@/components/game/CommentaryView'
@@ -14,8 +14,8 @@ import { AlertCircle, Loader, Play } from 'lucide-react'
 
 export default function GamePage() {
   const params = useParams()
-  const player1Id = params.player1 as string
-  const player2Id = params.player2 as string
+  const player1Id = (params?.player1 as string) || 'Player1'
+  const player2Id = (params?.player2 as string) || 'Goat_Bot'
   
   const {
     auctionState,
@@ -29,26 +29,23 @@ export default function GamePage() {
   const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`)
   const [isInitialized, setIsInitialized] = useState(false)
   const [commentary, setCommentary] = useState<any[]>([])
-  const [forceBypass, setForceBypass] = useState(false)
+  const [forceReady, setForceReady] = useState(false)
 
   const handleGameMessage = useCallback((message: GameMessage) => {
-    console.log('[Game] Message:', message.type)
+    if (!message) return
     
     if (message.type === 'auction_started' || message.type === 'bot_joined') {
-      setAuctionState(message.data)
+      if (message.data) setAuctionState(message.data)
       setIsLoading(false)
-      setForceBypass(true)
-    } else if (message.type === 'bid_placed') {
-      setAuctionState(message.data)
-      setIsLoading(false)
-    } else if (message.type === 'turn_skipped') {
-      setAuctionState(message.data)
+      setForceReady(true)
+    } else if (message.type === 'bid_placed' || message.type === 'turn_skipped') {
+      if (message.data) setAuctionState(message.data)
       setIsLoading(false)
     } else if (message.type === 'auction_completed') {
-      setAuctionState(message.data.state || message.data)
+      if (message.data) setAuctionState(message.data.state || message.data)
       setIsLoading(false)
     } else if (message.type === 'match_completed') {
-      setCommentary(message.data.commentary || [])
+      if (message.data?.commentary) setCommentary(message.data.commentary)
       setIsLoading(false)
     } else if (message.error) {
       setError(message.error)
@@ -61,11 +58,9 @@ export default function GamePage() {
     playerId: player1Id,
     onMessage: handleGameMessage,
     onConnect: () => {
-      console.log('[Game] Connected to WebSocket')
       setIsLoading(false)
     },
     onDisconnect: () => {
-      console.log('[Game] Disconnected from WebSocket')
       setError('Connection lost. Please refresh the page.')
     },
   })
@@ -92,9 +87,10 @@ export default function GamePage() {
     }
   }, [isConnected, isInitialized, player2Id, send, setIsLoading, sessionId, player1Id])
 
+  // مؤقت حماية إجباري لضمان عدم حدوث أي استثناء أو تعليق
   useEffect(() => {
     const timer = setTimeout(() => {
-      setForceBypass(true)
+      setForceReady(true)
       if (!auctionState) {
         setAuctionState({
           status: 'bidding',
@@ -107,7 +103,7 @@ export default function GamePage() {
           current_player: { rating: 80, name: 'Starting Player' }
         } as any)
       }
-    }, 3000)
+    }, 2500)
     return () => clearTimeout(timer)
   }, [auctionState, player1Id, setAuctionState])
 
@@ -142,7 +138,7 @@ export default function GamePage() {
     })
   }
 
-  if (!isConnected) {
+  if (!isConnected && !forceReady) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
         <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4">
@@ -152,14 +148,14 @@ export default function GamePage() {
             onClick={() => window.location.reload()} 
             className="text-xs text-accent-terracotta underline block mx-auto cursor-pointer"
           >
-            إعادة المحاولة / تحديث الصفحة
+            تحديث الصفحة
           </button>
         </Card>
       </div>
     )
   }
 
-  if (!auctionState && !forceBypass) {
+  if (!auctionState && !forceReady) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
         <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4">
@@ -169,7 +165,7 @@ export default function GamePage() {
             onClick={() => window.location.reload()} 
             className="text-xs text-accent-terracotta underline block mx-auto cursor-pointer"
           >
-            تخطي التعليق والتحديث
+            تخطي والتحديث
           </button>
         </Card>
       </div>
@@ -178,6 +174,9 @@ export default function GamePage() {
 
   const isAuctionComplete = auctionState?.status === 'completed'
   const isPlayersTurn = auctionState?.current_turn_player === player1Id
+
+  const p1TeamCount = auctionState?.player1_team ? Object.values(auctionState.player1_team).flat().length : 0
+  const p2TeamCount = auctionState?.player2_team ? Object.values(auctionState.player2_team).flat().length : 0
 
   return (
     <main className="min-h-screen bg-dark-bg">
@@ -188,7 +187,7 @@ export default function GamePage() {
             <h1 className="text-lg sm:text-xl font-bold text-text-primary">OSM FUT Auction</h1>
           </div>
           <div className="text-xs sm:text-sm text-text-secondary hidden sm:block">
-            Session: <span className="text-accent-terracotta font-mono">{sessionId.slice(0, 15)}...</span>
+            Session: <span className="text-accent-terracotta font-mono">{sessionId ? sessionId.slice(0, 15) : ''}...</span>
           </div>
         </div>
       </header>
@@ -204,10 +203,10 @@ export default function GamePage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           <div className="lg:col-span-2 space-y-4 sm:space-y-6">
             <AuctionTimer
-              timeRemaining={Math.max(0, auctionState?.timer_remaining || 30)}
-              currentBid={auctionState?.highest_bid || 0}
+              timeRemaining={Math.max(0, auctionState?.timer_remaining ?? 30)}
+              currentBid={auctionState?.highest_bid ?? 0}
               isYourTurn={isPlayersTurn}
-              currentPosition={auctionState?.current_position || 'GK'}
+              currentPosition={auctionState?.current_position ?? 'GK'}
               onBid={handlePlaceBid}
               onSkip={handleSkipBid}
               disabled={!isPlayersTurn || isLoading}
@@ -219,14 +218,14 @@ export default function GamePage() {
                 <div className="p-3 sm:p-4 rounded-btn bg-dark-bg-alt border-2 border-accent-terracotta/30">
                   <p className="text-xs text-text-secondary mb-2">Your Team</p>
                   <p className="text-2xl sm:text-3xl font-bold text-accent-terracotta">
-                    {Object.values(auctionState?.player1_team || {}).flat().length}
+                    {p1TeamCount}
                   </p>
                   <p className="text-xs text-text-secondary mt-1">Cards</p>
                 </div>
                 <div className="p-3 sm:p-4 rounded-btn bg-dark-bg-alt border-2 border-accent-gold/30">
                   <p className="text-xs text-text-secondary mb-2">Opponent ({player2Id === 'Goat_Bot' ? 'Goat 🐐' : 'Opponent'})</p>
                   <p className="text-2xl sm:text-3xl font-bold text-accent-gold">
-                    {Object.values(auctionState?.player2_team || {}).flat().length}
+                    {p2TeamCount}
                   </p>
                   <p className="text-xs text-text-secondary mt-1">Cards</p>
                 </div>
