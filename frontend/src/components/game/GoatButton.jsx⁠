@@ -1,0 +1,82 @@
+import React, { useState } from 'react';
+
+export default function GoatBotPanel({ socket, sessionId, playerId, onBotJoined }) {
+  const [loading, setLoading] = useState(false);
+  const [botActive, setBotActive] = useState(false);
+
+  const handleActivateGoat = () => {
+    if (!socket) return;
+    setLoading(true);
+    
+    // إرسال طلب تفعيل البوت للباك إند
+    socket.send(JSON.stringify({
+      action: "add_bot",
+      session_id: sessionId,
+      player_id: playerId
+    }));
+
+    setTimeout(() => {
+      setLoading(false);
+      setBotActive(true);
+      if (onBotJoined) onBotJoined("Goat 🐐");
+    }, 800);
+  };
+
+  return (
+    <div className="bg-[#1A1F2E] border border-[#2C2C3E] rounded-2xl p-6 shadow-xl max-w-md w-full mx-auto text-[#E8E8E8] space-y-4">
+      <div className="flex items-center justify-between border-b border-[#2C2C3E] pb-4">
+        <div className="flex items-center gap-3">
+          <div className="bg-[#D4714D]/20 p-3 rounded-xl border border-[#D4714D]/40">
+            <span className="text-2xl">🤖</span>
+          </div>
+          <div>
+            <h3 className="font-bold text-lg text-white">موضع الذكاء الاصطناعي</h3>
+            <p className="text-sm text-gray-400">نافس البوت الاحترافي في المزاد</p>
+          </div>
+        </div>
+        <span className="bg-emerald-500/10 text-emerald-400 text-xs px-3 py-1 rounded-full border border-emerald-500/20 font-medium">
+          جاهز للعب
+        </span>
+      </div>
+
+      <div className="bg-[#0F1419] p-4 rounded-xl border border-[#2C2C3E] space-y-2">
+        <div className="flex justify-between text-sm">
+          <span className="text-gray-400">اسم الخصم:</span>
+          <span className="font-bold text-[#D4714D]">Goat 🐐</span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-gray-400">مستوى الذكاء:</span>
+          <span className="text-white font-medium">متقدم (مزاید ذكي)</span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-gray-400">احتمالية الأسطوري:</span>
+          <span className="text-white font-medium">30%</span>
+        </div>
+      </div>
+
+      <button
+        onClick={handleActivateGoat}
+        disabled={loading || botActive}
+        className={`w-full py-3.5 px-6 rounded-xl font-bold transition-all duration-200 flex items-center justify-center gap-2 shadow-lg ${
+          botActive
+            ? 'bg-emerald-600 text-white cursor-default'
+            : 'bg-[#D4714D] hover:opacity-90 text-[#E8E8E8] border border-[#2C2C3E]'
+        }`}
+      >
+        {loading ? (
+          <span className="flex items-center gap-2">
+            <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+            </svg>
+            جاري استدعاء Goat...
+          </span>
+        ) : botActive ? (
+          <span>تم تفعيل البوت بنجاح (Goat نشط 🐐)</span>
+        ) : (
+          <span>ابدأ المزاد ضد Goat 🐐</span>
+        )}
+      </button>
+    </div>
+  );
+}
