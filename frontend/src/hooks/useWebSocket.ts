@@ -1,228 +1,147 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-import json
-import logging
-import asyncio
-from typing import Dict, Set
-from uuid import uuid4
+'use client'
 
-from app.game.auction import AuctionManager
-from app.game.match_engine import MatchEngine
-from app.game.goat_bot import goat_ai  # استيراد بوت الذكاء الاصطناعي Goat
-from app import schemas
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { GameMessage } from '@/types/game'
 
-logger = logging.getLogger(__name__)
+interface UseWebSocketOptions {
+  sessionId: string
+  playerId: string
+  onMessage?: (message: GameMessage) => void
+  onConnect?: () => void
+  onDisconnect?: () => void
+  reconnectAttempts?: number
+  reconnectInterval?: number
+}
 
-router = APIRouter()
+export const useWebSocket = ({
+  sessionId,
+  playerId,
+  onMessage,
+  onConnect,
+  onDisconnect,
+  reconnectAttempts = 5,
+  reconnectInterval = 3000,
+}: UseWebSocketOptions) => {
+  const socketRef = useRef<WebSocket | null>(null)
+  const [isConnected, setIsConnected] = useState<boolean>(false)
+  const [error, setError] = useState<string | null>(null)
+  const [connectionAttempts, setConnectionAttempts] = useState<number>(0)
+  
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isManuallyClosedRef = useRef<boolean>(false)
 
-# Active WebSocket connections and session manager
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
-        self.sessions: Dict[str, AuctionManager] = {}
-    
-    async def connect(self, websocket: WebSocket, connection_id: str):
-        await websocket.accept()
-        self.active_connections[connection_id] = websocket
-        logger.info(f"Client connected: {connection_id}")
-    
-    async def disconnect(self, connection_id: str):
-        if connection_id in self.active_connections:
-            del self.active_connections[connection_id]
-        logger.info(f"Client disconnected: {connection_id}")
-    
-    async def broadcast(self, data: dict, session_id: str = None):
-        """Broadcast message to all connections or specific session"""
-        if session_id:
-            # Find connections for this session
-            for conn_id, websocket in self.active_connections.items():
-                if session_id in conn_id:
-                    try:
-                        await websocket.send_json(data)
-                    except Exception as e:
-                        logger.error(f"Error sending to {conn_id}: {e}")
-        else:
-            # Broadcast to all
-            for websocket in self.active_connections.values():
-                try:
-                    await websocket.send_json(data)
-                except Exception as e:
-                    logger.error(f"Error broadcasting: {e}")
+  const connectSocket = useCallback(() => {
+    if (!sessionId || !playerId) {
+      console.warn('[WebSocket Hook] ⚠️ Missing sessionId or playerId, skipping connection.')
+      return
+    }
 
-manager = ConnectionManager()
+    try {
+      isManuallyClosedRef.current = false
+      const isLocal = window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1')
+      
+      let wsProtocol = isLocal ? 'ws' : 'wss'
+      let backendHost = isLocal ? 'localhost:8000' : window.location.host
 
-@router.websocket("/game/{session_id}/{player_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: str):
-    """WebSocket endpoint for real-time game communication
-    
-    Args:
-        websocket: WebSocket connection
-        session_id: Game session ID
-        player_id: Player identifier
-    """
-    connection_id = f"{session_id}_{player_id}"
-    await manager.connect(websocket, connection_id)
-    
-    try:
-        while True:
-            data = await websocket.receive_json()
-            action = data.get("action")
-            
-            logger.info(f"Received action '{action}' from player {player_id} in session {session_id}")
-            
-            if action == "start_auction":
-                await handle_start_auction(websocket, session_id, player_id, data)
-            elif action == "add_bot":
-                await handle_add_bot(websocket, session_id, player_id, data)
-            elif action == "place_bid":
-                await handle_place_bid(websocket, session_id, player_id, data)
-            elif action == "skip_bid":
-                await handle_skip_bid(websocket, session_id, player_id, data)
-            elif action == "start_match":
-                await handle_start_match(websocket, session_id, player_id, data)
-            else:
-                await websocket.send_json({"error": f"Unknown action: {action}"})
-    
-    except WebSocketDisconnect:
-        await manager.disconnect(connection_id)
-    except Exception as e:
-        logger.error(f"WebSocket error for {connection_id}: {e}")
-        await manager.disconnect(connection_id)
+      const envUrl = process.env.NEXT_PUBLIC_WS_URL
+      if (envUrl) {
+        if (envUrl.startsWith('https://')) {
+          backendHost = envUrl.replace('https://', '')
+          wsProtocol = 'wss'
+        } else if (envUrl.startsWith('http://')) {
+          backendHost = envUrl.replace('http://', '')
+          wsProtocol = 'ws'
+        } else if (envUrl.startsWith('wss://') || envUrl.startsWith('ws://')) {
+          const wsUrlFull = `${envUrl}/api/ws/game/${sessionId}/${playerId}`
+          console.log('[WebSocket Hook] 🔌 Connecting to custom full URL:', wsUrlFull)
+          const ws = new WebSocket(wsUrlFull)
+          setupEventHandlers(ws)
+          return
+        }
+      }
 
-async def handle_start_auction(websocket: WebSocket, session_id: str, player_id: str, data: dict):
-    """Handle auction start with shared session support"""
-    opponent_id = data.get("opponent_id")
-    
-    # التحقق هل الغرفة موجودة مسبقاً (ليشبك الجهاز الثاني عليها ولا يعلق)
-    if session_id not in manager.sessions:
-        auction = AuctionManager(session_id, player_id, opponent_id)
-        manager.sessions[session_id] = auction
-        state = auction.start_auction()
-    else:
-        auction = manager.sessions[session_id]
-        state = getattr(auction, "state", None)
-        if not state:
-            state = auction.start_auction()
-    
-    # Broadcast to both players in this session
-    await manager.broadcast({
-        "type": "auction_started",
-        "data": state
-    }, session_id)
-    
-    logger.info(f"Auction started/joined for session {session_id} by {player_id}")
+      const wsUrl = `${wsProtocol}://${backendHost}/api/ws/game/${sessionId}/${playerId}`
+      console.log('[WebSocket Hook] 🔌 Connecting to standard URL:', wsUrl)
+      const ws = new WebSocket(wsUrl)
+      setupEventHandlers(ws)
 
-async def handle_add_bot(websocket: WebSocket, session_id: str, player_id: str, data: dict):
-    """Handle adding Goat bot as an opponent"""
-    bot_id = "Goat_Bot"
-    
-    if session_id not in manager.sessions:
-        auction = AuctionManager(session_id, player_id, bot_id)
-        manager.sessions[session_id] = auction
-        state = auction.start_auction()
-    else:
-        auction = manager.sessions[session_id]
-        state = getattr(auction, "state", None)
-        if not state:
-            state = auction.start_auction()
-    
-    await manager.broadcast({
-        "type": "auction_started",
-        "bot_name": goat_ai.name,
-        "data": state
-    }, session_id)
-    
-    logger.info(f"Bot Goat joined session {session_id} against {player_id}")
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown connection error'
+      setError(errorMsg)
+      console.error('[WebSocket Hook] ❌ Connection execution failed:', err)
+    }
+  }, [sessionId, playerId])
 
-async def handle_place_bid(websocket: WebSocket, session_id: str, player_id: str, data: dict):
-    """Handle bid placement and trigger Goat bot response if playing against bot"""
-    amount = data.get("amount")
+  const setupEventHandlers = (ws: WebSocket) => {
+    ws.onopen = () => {
+      console.log('[WebSocket Hook] ✅ Connection established successfully.')
+      setIsConnected(true)
+      setError(null)
+      setConnectionAttempts(0)
+      onConnect?.()
+    }
     
-    auction = manager.sessions.get(session_id)
-    if not auction:
-        await websocket.send_json({"error": "Auction not found"})
-        return
+    ws.onmessage = (event) => {
+      try {
+        const message: GameMessage = JSON.parse(event.data)
+        console.log('[WebSocket Hook] 📨 Message received:', message.type)
+        onMessage?.(message)
+      } catch (err) {
+        console.error('[WebSocket Hook] ❌ Failed to parse incoming message JSON:', err)
+      }
+    }
     
-    # Place player bid
-    success, state = auction.place_bid(player_id, amount)
+    ws.onerror = (event) => {
+      console.error('[WebSocket Hook] ❌ Network or protocol error event:', event)
+      setError('WebSocket connection encountered an error.')
+    }
     
-    if success:
-        await manager.broadcast({
-            "type": "bid_placed",
-            "player_id": player_id,
-            "amount": amount,
-            "data": state
-        }, session_id)
-        
-        # إذا كان الخصم هو بوت Goat، نفذ مزايدته التلقائية بذكاء
-        if getattr(auction, "player2_id", "") == "Goat_Bot" and not state.get("auction_completed"):
-            await asyncio.sleep(1.5)  # محاكاة وقت تفكير البوت
-            current_bid = amount
-            player_rating = state.get("current_player", {}).get("rating", 80)
-            max_budget = 100  # ميزانية افتراضية للبوت
-            
-            bot_bid_amount = goat_ai.decide_bid(current_bid, player_rating, max_budget)
-            if bot_bid_amount > current_bid:
-                bot_success, bot_state = auction.place_bid("Goat_Bot", bot_bid_amount)
-                if bot_success:
-                    await manager.broadcast({
-                        "type": "bid_placed",
-                        "player_id": "Goat_Bot",
-                        "amount": bot_bid_amount,
-                        "data": bot_state
-                    }, session_id)
-    else:
-        await websocket.send_json({
-            "error": state.get("error", "Bid failed"),
-            "type": "bid_failed"
-        })
+    ws.onclose = (event) => {
+      console.log(`[WebSocket Hook] ❌ Connection closed. Code: ${event.code}, Reason: ${event.reason}`)
+      setIsConnected(false)
+      onDisconnect?.()
 
-async def handle_skip_bid(websocket: WebSocket, session_id: str, player_id: str, data: dict):
-    """Handle skip action"""
-    auction = manager.sessions.get(session_id)
-    if not auction:
-        await websocket.send_json({"error": "Auction not found"})
-        return
+      // محاولة إعادة الاتصال التلقائي إذا لم يتم الإغلاق بشكل يدوي
+      if (!isManuallyClosedRef.current && connectionAttempts < reconnectAttempts) {
+        console.log(`[WebSocket Hook] 🔄 Attempting to reconnect (${connectionAttempts + 1}/${reconnectAttempts})...`)
+        reconnectTimeoutRef.current = setTimeout(() => {
+          setConnectionAttempts((prev) => prev + 1)
+          connectSocket()
+        }, reconnectInterval)
+      }
+    }
     
-    # Skip bid
-    success, state = auction.skip_bid(player_id)
-    
-    if success:
-        if "auction_completed" in state:
-            await manager.broadcast({
-                "type": "auction_completed",
-                "data": state
-            }, session_id)
-        else:
-            await manager.broadcast({
-                "type": "turn_skipped",
-                "player_id": player_id,
-                "data": state
-            }, session_id)
-    else:
-        await websocket.send_json({
-            "error": state.get("error", "Skip failed"),
-            "type": "skip_failed"
-        })
+    socketRef.current = ws
+  }
 
-async def handle_start_match(websocket: WebSocket, session_id: str, player_id: str, data: dict):
-    """Handle match start and simulation"""
-    auction = manager.sessions.get(session_id)
-    if not auction:
-        await websocket.send_json({"error": "Auction not found"})
-        return
-    
-    # Get team compositions
-    player1_team = auction.player1_team
-    player2_team = auction.player2_team
-    
-    # Simulate match
-    match_engine = MatchEngine(player1_team, player2_team)
-    match_result = match_engine.simulate_match()
-    
-    # Broadcast match result
-    await manager.broadcast({
-        "type": "match_completed",
-        "data": match_result
-    }, session_id)
-    
-    logger.info(f"Match simulated for session {session_id}")
+  useEffect(() => {
+    connectSocket()
+
+    return () => {
+      isManuallyClosedRef.current = true
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+      }
+      if (socketRef.current) {
+        console.log('[WebSocket Hook] 🔌 Cleaning up and closing socket connection.')
+        socketRef.current.close()
+      }
+    }
+  }, [connectSocket])
+
+  const send = useCallback((message: GameMessage) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify(message))
+      console.log('[WebSocket Hook] 📤 Message sent successfully:', message.type)
+    } else {
+      console.warn('[WebSocket Hook]رياضيات ⚠️ Cannot send message, socket is not open. Current state:', socketRef.current?.readyState)
+    }
+  }, [])
+
+  return {
+    isConnected,
+    error,
+    send,
+    reconnect: connectSocket,
+  }
+}
