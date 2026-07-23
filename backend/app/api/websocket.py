@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.game.auction import AuctionManager
 from app.game.match_engine import MatchEngine
+from app.game.goat_bot import goat_ai  # استيراد بوت الذكاء الاصطناعي Goat
 from app import schemas
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
             
             if action == "start_auction":
                 await handle_start_auction(websocket, session_id, player_id, data)
+            elif action == "add_bot":
+                await handle_add_bot(websocket, session_id, player_id, data)
             elif action == "place_bid":
                 await handle_place_bid(websocket, session_id, player_id, data)
             elif action == "skip_bid":
@@ -102,8 +105,24 @@ async def handle_start_auction(websocket: WebSocket, session_id: str, player_id:
     
     logger.info(f"Auction started for session {session_id}")
 
+async def handle_add_bot(websocket: WebSocket, session_id: str, player_id: str, data: dict):
+    """Handle adding Goat bot as an opponent"""
+    bot_id = "Goat_Bot"
+    auction = AuctionManager(session_id, player_id, bot_id)
+    manager.sessions[session_id] = auction
+    
+    state = auction.start_auction()
+    
+    await manager.broadcast({
+        "type": "bot_joined",
+        "bot_name": goat_ai.name,
+        "data": state
+    }, session_id)
+    
+    logger.info(f"Bot Goat joined session {session_id} against {player_id}")
+
 async def handle_place_bid(websocket: WebSocket, session_id: str, player_id: str, data: dict):
-    """Handle bid placement"""
+    """Handle bid placement and trigger Goat bot response if playing against bot"""
     amount = data.get("amount")
     
     auction = manager.sessions.get(session_id)
@@ -111,7 +130,7 @@ async def handle_place_bid(websocket: WebSocket, session_id: str, player_id: str
         await websocket.send_json({"error": "Auction not found"})
         return
     
-    # Place bid
+    # Place player bid
     success, state = auction.place_bid(player_id, amount)
     
     if success:
@@ -121,6 +140,24 @@ async def handle_place_bid(websocket: WebSocket, session_id: str, player_id: str
             "amount": amount,
             "data": state
         }, session_id)
+        
+        # إذا كان الخصم هو بوت Goat، نفذ مزايدته التلقائية بذكاء
+        if getattr(auction, "player2_id", "") == "Goat_Bot" and not state.get("auction_completed"):
+            await asyncio.sleep(1.5)  # محاكاة وقت تفكير البوت
+            current_bid = amount
+            player_rating = state.get("current_player", {}).get("rating", 80)
+            max_budget = 100  # ميزانية افتراضية للبوت
+            
+            bot_bid_amount = goat_ai.decide_bid(current_bid, player_rating, max_budget)
+            if bot_bid_amount > current_bid:
+                bot_success, bot_state = auction.place_bid("Goat_Bot", bot_bid_amount)
+                if bot_success:
+                    await manager.broadcast({
+                        "type": "bid_placed",
+                        "player_id": "Goat_Bot",
+                        "amount": bot_bid_amount,
+                        "data": bot_state
+                    }, session_id)
     else:
         await websocket.send_json({
             "error": state.get("error", "Bid failed"),
