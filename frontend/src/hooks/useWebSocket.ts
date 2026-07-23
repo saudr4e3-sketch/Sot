@@ -86,12 +86,11 @@ async def handle_start_auction(websocket: WebSocket, session_id: str, player_id:
         state = auction.start_auction()
     else:
         auction = manager.sessions[session_id]
-        # استرجاع الحالة الحالية مباشرة إذا كانت الغرفة نشطة مسبقاً
-        state = getattr(auction, "get_state", lambda: auction.start_auction())()
-        if callable(state):
+        # استخدام خاصية الـ state المتاحة مباشرة في الـ AuctionManager لتفادي الأخطاء
+        state = getattr(auction, "state", None)
+        if not state:
             state = auction.start_auction()
 
-    # بث الحالة لجميع المتصلين في الجلسة لفك التعليق فوراً
     await manager.broadcast({
         "type": "auction_started",
         "data": state
@@ -108,7 +107,9 @@ async def handle_add_bot(websocket: WebSocket, session_id: str, player_id: str, 
         state = auction.start_auction()
     else:
         auction = manager.sessions[session_id]
-        state = auction.start_auction()
+        state = getattr(auction, "state", None)
+        if not state:
+            state = auction.start_auction()
     
     await manager.broadcast({
         "type": "auction_started",
