@@ -87,29 +87,36 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
         await manager.disconnect(connection_id)
 
 async def handle_start_auction(websocket: WebSocket, session_id: str, player_id: str, data: dict):
-    """Handle auction start"""
+    """Handle auction start with shared session support"""
     opponent_id = data.get("opponent_id")
     
-    # Create auction manager
-    auction = AuctionManager(session_id, player_id, opponent_id)
-    manager.sessions[session_id] = auction
+    # التحقق هل الغرفة موجودة مسبقاً (ليشبك الجهاز الثاني عليها ولا يعلق)
+    if session_id not in manager.sessions:
+        auction = AuctionManager(session_id, player_id, opponent_id)
+        manager.sessions[session_id] = auction
+    else:
+        auction = manager.sessions[session_id]
     
     # Start auction
     state = auction.start_auction()
     
-    # Broadcast to both players
+    # Broadcast to both players in this session
     await manager.broadcast({
         "type": "auction_started",
         "data": state
     }, session_id)
     
-    logger.info(f"Auction started for session {session_id}")
+    logger.info(f"Auction started/joined for session {session_id} by {player_id}")
 
 async def handle_add_bot(websocket: WebSocket, session_id: str, player_id: str, data: dict):
     """Handle adding Goat bot as an opponent"""
     bot_id = "Goat_Bot"
-    auction = AuctionManager(session_id, player_id, bot_id)
-    manager.sessions[session_id] = auction
+    
+    if session_id not in manager.sessions:
+        auction = AuctionManager(session_id, player_id, bot_id)
+        manager.sessions[session_id] = auction
+    else:
+        auction = manager.sessions[session_id]
     
     state = auction.start_auction()
     
