@@ -26,15 +26,11 @@ export default function GamePage() {
     isLoading,
   } = useGameStore()
   
-  // توليد SessionId ثابت لتجنب مشاكل الاتصال المعلق
   const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`)
   const [isInitialized, setIsInitialized] = useState(false)
   const [commentary, setCommentary] = useState<any[]>([])
-  
-  // حالة أمان لفك تعليق شاشة التحميل فوراً إذا تأخر السيرفر
   const [forceBypass, setForceBypass] = useState(false)
 
-  // Initialize WebSocket connection
   const handleGameMessage = useCallback((message: GameMessage) => {
     console.log('[Game] Message:', message.type)
     
@@ -74,7 +70,6 @@ export default function GamePage() {
     },
   })
 
-  // Initialize game as soon as connected
   useEffect(() => {
     if (!isInitialized && isConnected) {
       setIsInitialized(true)
@@ -97,11 +92,9 @@ export default function GamePage() {
     }
   }, [isConnected, isInitialized, player2Id, send, setIsLoading, sessionId, player1Id])
 
-  // مؤقت أمان زمني لفك شاشة التحميل إجبارياً بعد 3 ثوانٍ لمنع التعليق الأبدي
   useEffect(() => {
     const timer = setTimeout(() => {
       setForceBypass(true)
-      // إذا لم يكن هناك auctionState، نقوم بإنشاء حالة افتراضية لتجنب شاشة التعليق
       if (!auctionState) {
         setAuctionState({
           status: 'bidding',
@@ -188,7 +181,6 @@ export default function GamePage() {
 
   return (
     <main className="min-h-screen bg-dark-bg">
-      {/* Header */}
       <header className="bg-dark-bg-alt border-b border-dark-card sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-3">
@@ -201,7 +193,6 @@ export default function GamePage() {
         </div>
       </header>
 
-      {/* Main Game Area */}
       <div className="max-w-7xl mx-auto px-4 py-6 sm:py-8">
         {storeError && (
           <Card className="p-3 sm:p-4 mb-6 bg-status-error/10 border border-status-error flex items-start gap-3">
@@ -211,7 +202,6 @@ export default function GamePage() {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-          {/* Left - Main Auction Control */}
           <div className="lg:col-span-2 space-y-4 sm:space-y-6">
             <AuctionTimer
               timeRemaining={Math.max(0, auctionState?.timer_remaining || 30)}
@@ -223,7 +213,6 @@ export default function GamePage() {
               disabled={!isPlayersTurn || isLoading}
             />
 
-            {/* Teams Overview */}
             <Card className="p-4 sm:p-6">
               <h3 className="font-bold text-text-primary mb-4 text-base sm:text-lg">Team Status</h3>
               <div className="grid grid-cols-2 gap-3 sm:gap-4">
@@ -245,12 +234,10 @@ export default function GamePage() {
             </Card>
           </div>
 
-          {/* Right - Progress & Commentary */}
           <div className="space-y-4 sm:space-y-6">
             {auctionState && <AuctionProgress state={auctionState} />}
             <CommentaryView commentary={commentary} isLive={!isAuctionComplete} maxHeight="max-h-64 sm:max-h-96" />
 
-            {/* Action Buttons */}
             {isAuctionComplete && (
               <Button
                 onClick={handleStartMatch}
@@ -258,7 +245,7 @@ export default function GamePage() {
                 size="lg"
                 loading={isLoading}
               >
-                <Play size=size="lg" className="mr-2" />
+                <Play size={18} className="mr-2" />
                 Start Match
               </Button>
             )}
@@ -266,7 +253,6 @@ export default function GamePage() {
         </div>
       </div>
 
-      {/* Footer with Developer Signature */}
       <footer className="bg-dark-bg-alt border-t border-dark-card mt-8 sm:mt-12 py-6 sm:py-8">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center text-center sm:text-left gap-4">
           <p className="text-text-secondary text-xs sm:text-sm">
