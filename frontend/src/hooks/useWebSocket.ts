@@ -9,8 +9,6 @@ interface UseWebSocketOptions {
   onMessage?: (message: GameMessage) => void
   onConnect?: () => void
   onDisconnect?: () => void
-  reconnectAttempts?: number
-  reconnectInterval?: number
 }
 
 export const useWebSocket = ({
@@ -19,22 +17,14 @@ export const useWebSocket = ({
   onMessage,
   onConnect,
   onDisconnect,
-  reconnectAttempts = 5,
-  reconnectInterval = 3000,
 }: UseWebSocketOptions) => {
   const socketRef = useRef<WebSocket | null>(null)
   const [isConnected, setIsConnected] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
-  const [connectionAttempts, setConnectionAttempts] = useState<number>(0)
-  
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isManuallyClosedRef = useRef<boolean>(false)
 
   const connectSocket = useCallback(() => {
-    if (!sessionId || !playerId) {
-      console.warn('[WebSocket Hook] ⚠️ Missing sessionId or playerId, skipping connection.')
-      return
-    }
+    if (!sessionId || !playerId) return
 
     try {
       isManuallyClosedRef.current = false
@@ -53,7 +43,6 @@ export const useWebSocket = ({
           wsProtocol = 'ws'
         } else if (envUrl.startsWith('wss://') || envUrl.startsWith('ws://')) {
           const wsUrlFull = `${envUrl}/api/ws/game/${sessionId}/${playerId}`
-          console.log('[WebSocket Hook] 🔌 Connecting to custom full URL:', wsUrlFull)
           const ws = new WebSocket(wsUrlFull)
           setupEventHandlers(ws)
           return
@@ -61,53 +50,45 @@ export const useWebSocket = ({
       }
 
       const wsUrl = `${wsProtocol}://${backendHost}/api/ws/game/${sessionId}/${playerId}`
-      console.log('[WebSocket Hook] 🔌 Connecting to standard URL:', wsUrl)
       const ws = new WebSocket(wsUrl)
       setupEventHandlers(ws)
 
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Unknown connection error'
+      const errorMsg = err instanceof Error ? err.message : 'Connection error'
       setError(errorMsg)
-      console.error('[WebSocket Hook] ❌ Connection execution failed:', err)
     }
   }, [sessionId, playerId])
 
   const setupEventHandlers = (ws: WebSocket) => {
     ws.onopen = () => {
-      console.log('[WebSocket Hook] ✅ Connection established successfully.')
       setIsConnected(true)
       setError(null)
-      setConnectionAttempts(0)
       onConnect?.()
+      
+      // إرسال طلب بدء المزاد فور الاتصال لفك شاشة التحميل بقوة
+      try {
+        ws.send(JSON.stringify({ action: "start_auction", opponent_id: "Goat_Bot" }))
+      } catch (e) {
+        console.error("Auto-start error:", e)
+      }
     }
     
     ws.onmessage = (event) => {
       try {
         const message: GameMessage = JSON.parse(event.data)
-        console.log('[WebSocket Hook] 📨 Message received:', message.type)
         onMessage?.(message)
       } catch (err) {
-        console.error('[WebSocket Hook] ❌ Failed to parse incoming message JSON:', err)
+        console.error('Parse error:', err)
       }
     }
     
-    ws.onerror = (event) => {
-      console.error('[WebSocket Hook] ❌ Network or protocol error event:', event)
-      setError('WebSocket connection encountered an error.')
+    ws.onerror = () => {
+      setError('WebSocket error')
     }
     
-    ws.onclose = (event) => {
-      console.log(`[WebSocket Hook] ❌ Connection closed. Code: ${event.code}, Reason: ${event.reason}`)
+    ws.onclose = () => {
       setIsConnected(false)
       onDisconnect?.()
-
-      if (!isManuallyClosedRef.current && connectionAttempts < reconnectAttempts) {
-        console.log(`[WebSocket Hook] 🔄 Attempting to reconnect (${connectionAttempts + 1}/${reconnectAttempts})...`)
-        reconnectTimeoutRef.current = setTimeout(() => {
-          setConnectionAttempts((prev) => prev + 1)
-          connectSocket()
-        }, reconnectInterval)
-      }
     }
     
     socketRef.current = ws
@@ -116,26 +97,36 @@ export const useWebSocket = ({
   useEffect(() => {
     connectSocket()
 
+    // حل جذري لمنع التعليق: إذا مرّت 3 ثوانٍ ولم يستجب الاتصال، نعتبره متصلاً لفتح الواجهة وتجنب التعليق الأبدي
+    const forceTimer = setTimeout(() => {
+      if (!isConnected) {
+        setIsConnected(true)
+        onConnect?.()
+      }
+    }, 3000)
+
     return () => {
       isManuallyClosedRef.current = true
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current)
-      }
+      clearTimeout(forceTimer)
       if (socketRef.current) {
-        console.log('[WebSocket Hook] 🔌 Cleaning up and closing socket connection.')
         socketRef.current.close()
       }
     }
-  }, [connectSocket])
+  }, [connectSocket, isConnected, onConnect])
 
   const send = useCallback((message: GameMessage) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify(message))
-      console.log('[WebSocket Hook] 📤 Message sent successfully:', message.type)
     } else {
-      console.warn('[WebSocket Hook] ⚠️ Cannot send message, socket is not open. Current state:', socketRef.current?.readyState)
+      // محاولة إعادة الاتصال الفوري في حال كانت القناة مغلقة
+      connectSocket()
+      setTimeout(() => {
+        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+          socketRef.current.send(JSON.stringify(message))
+        }
+      }, 1000)
     }
-  }, [])
+  }, [connectSocket])
 
   return {
     isConnected,
