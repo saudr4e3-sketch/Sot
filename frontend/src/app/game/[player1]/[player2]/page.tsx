@@ -26,7 +26,8 @@ export default function GamePage() {
     isLoading,
   } = useGameStore()
   
-  const [sessionId, setSessionId] = useState('')
+  // توليد SessionId ثابت فور تحميل الصفحة لتجنب مشاكل الاتصال المعلق
+  const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`)
   const [isInitialized, setIsInitialized] = useState(false)
   const [commentary, setCommentary] = useState<any[]>([])
 
@@ -34,7 +35,7 @@ export default function GamePage() {
   const handleGameMessage = useCallback((message: GameMessage) => {
     console.log('[Game] Message:', message.type)
     
-    if (message.type === 'auction_started') {
+    if (message.type === 'auction_started' || message.type === 'bot_joined') {
       setAuctionState(message.data)
       setIsLoading(false)
     } else if (message.type === 'bid_placed') {
@@ -44,7 +45,7 @@ export default function GamePage() {
       setAuctionState(message.data)
       setIsLoading(false)
     } else if (message.type === 'auction_completed') {
-      setAuctionState(message.data.state)
+      setAuctionState(message.data.state || message.data)
       setIsLoading(false)
     } else if (message.type === 'match_completed') {
       setCommentary(message.data.commentary || [])
@@ -69,22 +70,29 @@ export default function GamePage() {
     },
   })
 
-  // Initialize game
+  // Initialize game as soon as connected
   useEffect(() => {
     if (!isInitialized && isConnected) {
-      const newSessionId = `session_${Date.now()}`
-      setSessionId(newSessionId)
       setIsInitialized(true)
       setIsLoading(true)
       
-      // Send start auction message
-      send({
-        type: 'start_auction',
-        action: 'start_auction',
-        opponent_id: player2Id,
-      })
+      // التحقق مما إذا كان الخصم هو بوت Goat وإرسال الحدث المناسب
+      if (player2Id === 'Goat_Bot') {
+        send({
+          type: 'add_bot',
+          action: 'add_bot',
+          session_id: sessionId,
+          player_id: player1Id,
+        })
+      } else {
+        send({
+          type: 'start_auction',
+          action: 'start_auction',
+          opponent_id: player2Id,
+        })
+      }
     }
-  }, [isConnected, isInitialized, player2Id, send, setIsLoading])
+  }, [isConnected, isInitialized, player2Id, send, setIsLoading, sessionId, player1Id])
 
   const handlePlaceBid = (amount: number) => {
     setIsLoading(true)
@@ -186,14 +194,14 @@ export default function GamePage() {
                 <div className="p-3 sm:p-4 rounded-btn bg-dark-bg-alt border-2 border-accent-terracotta/30">
                   <p className="text-xs text-text-secondary mb-2">Your Team</p>
                   <p className="text-2xl sm:text-3xl font-bold text-accent-terracotta">
-                    {Object.values(auctionState.player1_team).flat().length}
+                    {Object.values(auctionState.player1_team || {}).flat().length}
                   </p>
                   <p className="text-xs text-text-secondary mt-1">Cards</p>
                 </div>
                 <div className="p-3 sm:p-4 rounded-btn bg-dark-bg-alt border-2 border-accent-gold/30">
-                  <p className="text-xs text-text-secondary mb-2">Opponent</p>
+                  <p className="text-xs text-text-secondary mb-2">Opponent ({player2Id === 'Goat_Bot' ? 'Goat 🐐' : 'Opponent'})</p>
                   <p className="text-2xl sm:text-3xl font-bold text-accent-gold">
-                    {Object.values(auctionState.player2_team).flat().length}
+                    {Object.values(auctionState.player2_team || {}).flat().length}
                   </p>
                   <p className="text-xs text-text-secondary mt-1">Cards</p>
                 </div>
