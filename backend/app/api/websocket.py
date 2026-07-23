@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Active WebSocket connections
+# Active WebSocket connections and session manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
@@ -67,6 +67,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
             data = await websocket.receive_json()
             action = data.get("action")
             
+            logger.info(f"Received action '{action}' from player {player_id} in session {session_id}")
+            
             if action == "start_auction":
                 await handle_start_auction(websocket, session_id, player_id, data)
             elif action == "add_bot":
@@ -83,7 +85,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
     except WebSocketDisconnect:
         await manager.disconnect(connection_id)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error for {connection_id}: {e}")
         await manager.disconnect(connection_id)
 
 async def handle_start_auction(websocket: WebSocket, session_id: str, player_id: str, data: dict):
@@ -94,11 +96,12 @@ async def handle_start_auction(websocket: WebSocket, session_id: str, player_id:
     if session_id not in manager.sessions:
         auction = AuctionManager(session_id, player_id, opponent_id)
         manager.sessions[session_id] = auction
+        state = auction.start_auction()
     else:
         auction = manager.sessions[session_id]
-    
-    # Start auction
-    state = auction.start_auction()
+        state = getattr(auction, "state", None)
+        if not state:
+            state = auction.start_auction()
     
     # Broadcast to both players in this session
     await manager.broadcast({
@@ -115,13 +118,15 @@ async def handle_add_bot(websocket: WebSocket, session_id: str, player_id: str, 
     if session_id not in manager.sessions:
         auction = AuctionManager(session_id, player_id, bot_id)
         manager.sessions[session_id] = auction
+        state = auction.start_auction()
     else:
         auction = manager.sessions[session_id]
-    
-    state = auction.start_auction()
+        state = getattr(auction, "state", None)
+        if not state:
+            state = auction.start_auction()
     
     await manager.broadcast({
-        "type": "bot_joined",
+        "type": "auction_started",
         "bot_name": goat_ai.name,
         "data": state
     }, session_id)
@@ -200,7 +205,7 @@ async def handle_skip_bid(websocket: WebSocket, session_id: str, player_id: str,
         })
 
 async def handle_start_match(websocket: WebSocket, session_id: str, player_id: str, data: dict):
-    """Handle match start"""
+    """Handle match start and simulation"""
     auction = manager.sessions.get(session_id)
     if not auction:
         await websocket.send_json({"error": "Auction not found"})
