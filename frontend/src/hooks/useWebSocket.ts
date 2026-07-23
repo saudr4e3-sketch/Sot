@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Active WebSocket connections
+# Active WebSocket connections and session manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
@@ -33,6 +33,7 @@ class ConnectionManager:
     async def broadcast(self, data: dict, session_id: str = None):
         """Broadcast message to all connections or specific session"""
         if session_id:
+            # Find connections for this session
             for conn_id, websocket in self.active_connections.items():
                 if session_id in conn_id:
                     try:
@@ -40,6 +41,7 @@ class ConnectionManager:
                     except Exception as e:
                         logger.error(f"Error sending to {conn_id}: {e}")
         else:
+            # Broadcast to all
             for websocket in self.active_connections.values():
                 try:
                     await websocket.send_json(data)
@@ -50,6 +52,13 @@ manager = ConnectionManager()
 
 @router.websocket("/game/{session_id}/{player_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: str):
+    """WebSocket endpoint for real-time game communication
+    
+    Args:
+        websocket: WebSocket connection
+        session_id: Game session ID
+        player_id: Player identifier
+    """
     connection_id = f"{session_id}_{player_id}"
     await manager.connect(websocket, connection_id)
     
@@ -57,6 +66,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
         while True:
             data = await websocket.receive_json()
             action = data.get("action")
+            
+            logger.info(f"Received action '{action}' from player {player_id} in session {session_id}")
             
             if action == "start_auction":
                 await handle_start_auction(websocket, session_id, player_id, data)
@@ -74,23 +85,25 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
     except WebSocketDisconnect:
         await manager.disconnect(connection_id)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error for {connection_id}: {e}")
         await manager.disconnect(connection_id)
 
 async def handle_start_auction(websocket: WebSocket, session_id: str, player_id: str, data: dict):
+    """Handle auction start with shared session support"""
     opponent_id = data.get("opponent_id")
     
+    # التحقق هل الغرفة موجودة مسبقاً (ليشبك الجهاز الثاني عليها ولا يعلق)
     if session_id not in manager.sessions:
         auction = AuctionManager(session_id, player_id, opponent_id)
         manager.sessions[session_id] = auction
         state = auction.start_auction()
     else:
         auction = manager.sessions[session_id]
-        # استخدام خاصية الـ state المتاحة مباشرة في الـ AuctionManager لتفادي الأخطاء
         state = getattr(auction, "state", None)
         if not state:
             state = auction.start_auction()
-
+    
+    # Broadcast to both players in this session
     await manager.broadcast({
         "type": "auction_started",
         "data": state
@@ -99,6 +112,7 @@ async def handle_start_auction(websocket: WebSocket, session_id: str, player_id:
     logger.info(f"Auction started/joined for session {session_id} by {player_id}")
 
 async def handle_add_bot(websocket: WebSocket, session_id: str, player_id: str, data: dict):
+    """Handle adding Goat bot as an opponent"""
     bot_id = "Goat_Bot"
     
     if session_id not in manager.sessions:
@@ -120,6 +134,7 @@ async def handle_add_bot(websocket: WebSocket, session_id: str, player_id: str, 
     logger.info(f"Bot Goat joined session {session_id} against {player_id}")
 
 async def handle_place_bid(websocket: WebSocket, session_id: str, player_id: str, data: dict):
+    """Handle bid placement and trigger Goat bot response if playing against bot"""
     amount = data.get("amount")
     
     auction = manager.sessions.get(session_id)
@@ -127,6 +142,7 @@ async def handle_place_bid(websocket: WebSocket, session_id: str, player_id: str
         await websocket.send_json({"error": "Auction not found"})
         return
     
+    # Place player bid
     success, state = auction.place_bid(player_id, amount)
     
     if success:
@@ -137,11 +153,12 @@ async def handle_place_bid(websocket: WebSocket, session_id: str, player_id: str
             "data": state
         }, session_id)
         
+        # إذا كان الخصم هو بوت Goat، نفذ مزايدته التلقائية بذكاء
         if getattr(auction, "player2_id", "") == "Goat_Bot" and not state.get("auction_completed"):
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.5)  # محاكاة وقت تفكير البوت
             current_bid = amount
             player_rating = state.get("current_player", {}).get("rating", 80)
-            max_budget = 100
+            max_budget = 100  # ميزانية افتراضية للبوت
             
             bot_bid_amount = goat_ai.decide_bid(current_bid, player_rating, max_budget)
             if bot_bid_amount > current_bid:
@@ -160,11 +177,13 @@ async def handle_place_bid(websocket: WebSocket, session_id: str, player_id: str
         })
 
 async def handle_skip_bid(websocket: WebSocket, session_id: str, player_id: str, data: dict):
+    """Handle skip action"""
     auction = manager.sessions.get(session_id)
     if not auction:
         await websocket.send_json({"error": "Auction not found"})
         return
     
+    # Skip bid
     success, state = auction.skip_bid(player_id)
     
     if success:
@@ -186,17 +205,21 @@ async def handle_skip_bid(websocket: WebSocket, session_id: str, player_id: str,
         })
 
 async def handle_start_match(websocket: WebSocket, session_id: str, player_id: str, data: dict):
+    """Handle match start and simulation"""
     auction = manager.sessions.get(session_id)
     if not auction:
         await websocket.send_json({"error": "Auction not found"})
         return
     
+    # Get team compositions
     player1_team = auction.player1_team
     player2_team = auction.player2_team
     
+    # Simulate match
     match_engine = MatchEngine(player1_team, player2_team)
     match_result = match_engine.simulate_match()
     
+    # Broadcast match result
     await manager.broadcast({
         "type": "match_completed",
         "data": match_result
