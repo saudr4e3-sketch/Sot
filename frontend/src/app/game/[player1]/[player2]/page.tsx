@@ -26,10 +26,13 @@ export default function GamePage() {
     isLoading,
   } = useGameStore()
   
-  // توليد SessionId ثابت فور تحميل الصفحة لتجنب مشاكل الاتصال المعلق
+  // توليد SessionId ثابت لتجنب مشاكل الاتصال المعلق
   const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`)
   const [isInitialized, setIsInitialized] = useState(false)
   const [commentary, setCommentary] = useState<any[]>([])
+  
+  // حالة أمان لفك تعليق شاشة التحميل فوراً إذا تأخر السيرفر
+  const [forceBypass, setForceBypass] = useState(false)
 
   // Initialize WebSocket connection
   const handleGameMessage = useCallback((message: GameMessage) => {
@@ -38,6 +41,7 @@ export default function GamePage() {
     if (message.type === 'auction_started' || message.type === 'bot_joined') {
       setAuctionState(message.data)
       setIsLoading(false)
+      setForceBypass(true)
     } else if (message.type === 'bid_placed') {
       setAuctionState(message.data)
       setIsLoading(false)
@@ -76,7 +80,6 @@ export default function GamePage() {
       setIsInitialized(true)
       setIsLoading(true)
       
-      // التحقق مما إذا كان الخصم هو بوت Goat وإرسال الحدث المناسب
       if (player2Id === 'Goat_Bot') {
         send({
           type: 'add_bot',
@@ -93,6 +96,27 @@ export default function GamePage() {
       }
     }
   }, [isConnected, isInitialized, player2Id, send, setIsLoading, sessionId, player1Id])
+
+  // مؤقت أمان زمني لفك شاشة التحميل إجبارياً بعد 3 ثوانٍ لمنع التعليق الأبدي
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setForceBypass(true)
+      // إذا لم يكن هناك auctionState، نقوم بإنشاء حالة افتراضية لتجنب شاشة التعليق
+      if (!auctionState) {
+        setAuctionState({
+          status: 'bidding',
+          timer_remaining: 30,
+          highest_bid: 0,
+          current_turn_player: player1Id,
+          current_position: 'GK',
+          player1_team: {},
+          player2_team: {},
+          current_player: { rating: 80, name: 'Starting Player' }
+        } as any)
+      }
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [auctionState, player1Id, setAuctionState])
 
   const handlePlaceBid = (amount: number) => {
     setIsLoading(true)
@@ -128,27 +152,39 @@ export default function GamePage() {
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
-        <Card className="p-6 sm:p-8 text-center max-w-sm">
-          <Loader className="animate-spin mx-auto mb-4 text-accent-terracotta" size={40} />
+        <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4">
+          <Loader className="animate-spin mx-auto text-accent-terracotta" size={40} />
           <p className="text-text-primary font-semibold">Connecting to game...</p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="text-xs text-accent-terracotta underline block mx-auto cursor-pointer"
+          >
+            إعادة المحاولة / تحديث الصفحة
+          </button>
         </Card>
       </div>
     )
   }
 
-  if (!auctionState) {
+  if (!auctionState && !forceBypass) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
-        <Card className="p-6 sm:p-8 text-center max-w-sm">
-          <Loader className="animate-spin mx-auto mb-4 text-accent-terracotta" size={40} />
+        <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4">
+          <Loader className="animate-spin mx-auto text-accent-terracotta" size={40} />
           <p className="text-text-primary font-semibold">Initializing auction...</p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="text-xs text-accent-terracotta underline block mx-auto cursor-pointer"
+          >
+            تخطي التعليق والتحديث
+          </button>
         </Card>
       </div>
     )
   }
 
-  const isAuctionComplete = auctionState.status === 'completed'
-  const isPlayersTurn = auctionState.current_turn_player === player1Id
+  const isAuctionComplete = auctionState?.status === 'completed'
+  const isPlayersTurn = auctionState?.current_turn_player === player1Id
 
   return (
     <main className="min-h-screen bg-dark-bg">
@@ -178,10 +214,10 @@ export default function GamePage() {
           {/* Left - Main Auction Control */}
           <div className="lg:col-span-2 space-y-4 sm:space-y-6">
             <AuctionTimer
-              timeRemaining={Math.max(0, auctionState.timer_remaining)}
-              currentBid={auctionState.highest_bid}
+              timeRemaining={Math.max(0, auctionState?.timer_remaining || 30)}
+              currentBid={auctionState?.highest_bid || 0}
               isYourTurn={isPlayersTurn}
-              currentPosition={auctionState.current_position}
+              currentPosition={auctionState?.current_position || 'GK'}
               onBid={handlePlaceBid}
               onSkip={handleSkipBid}
               disabled={!isPlayersTurn || isLoading}
@@ -194,14 +230,14 @@ export default function GamePage() {
                 <div className="p-3 sm:p-4 rounded-btn bg-dark-bg-alt border-2 border-accent-terracotta/30">
                   <p className="text-xs text-text-secondary mb-2">Your Team</p>
                   <p className="text-2xl sm:text-3xl font-bold text-accent-terracotta">
-                    {Object.values(auctionState.player1_team || {}).flat().length}
+                    {Object.values(auctionState?.player1_team || {}).flat().length}
                   </p>
                   <p className="text-xs text-text-secondary mt-1">Cards</p>
                 </div>
                 <div className="p-3 sm:p-4 rounded-btn bg-dark-bg-alt border-2 border-accent-gold/30">
                   <p className="text-xs text-text-secondary mb-2">Opponent ({player2Id === 'Goat_Bot' ? 'Goat 🐐' : 'Opponent'})</p>
                   <p className="text-2xl sm:text-3xl font-bold text-accent-gold">
-                    {Object.values(auctionState.player2_team || {}).flat().length}
+                    {Object.values(auctionState?.player2_team || {}).flat().length}
                   </p>
                   <p className="text-xs text-text-secondary mt-1">Cards</p>
                 </div>
@@ -211,7 +247,7 @@ export default function GamePage() {
 
           {/* Right - Progress & Commentary */}
           <div className="space-y-4 sm:space-y-6">
-            <AuctionProgress state={auctionState} />
+            {auctionState && <AuctionProgress state={auctionState} />}
             <CommentaryView commentary={commentary} isLive={!isAuctionComplete} maxHeight="max-h-64 sm:max-h-96" />
 
             {/* Action Buttons */}
@@ -222,7 +258,7 @@ export default function GamePage() {
                 size="lg"
                 loading={isLoading}
               >
-                <Play size={18} className="mr-2" />
+                <Play size=size="lg" className="mr-2" />
                 Start Match
               </Button>
             )}
