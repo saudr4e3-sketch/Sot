@@ -3,7 +3,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameMessage } from '@/types/game'
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:8000'
+// تحديد الرابط تلقائياً بناءً على بيئة التشغيل (محلي أو رندر)
+const getWsUrl = () => {
+  if (typeof window !== 'undefined') {
+    const host = window.location.host
+    if (host.includes('localhost') || host.includes('127.0.0.1')) {
+      return 'ws://localhost:8000'
+    }
+    // إذا كان الموقع يعمل على رندر، استخدم نفس النطاق الحالي للباك إند أو الرابط المباشر
+    return process.env.NEXT_PUBLIC_WS_URL || `wss://${host}`
+  }
+  return process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
+}
 
 interface UseWebSocketProps {
   sessionId: string
@@ -30,9 +41,9 @@ export const useWebSocket = ({
 
     const connectSocket = async () => {
       try {
-        // WebSocket connection for real-time game communication
-        const protocol = WS_URL.includes('localhost') ? 'ws' : 'wss'
-        const host = WS_URL.replace(/^https?:\/\//, '')
+        const baseUrl = getWsUrl()
+        const protocol = baseUrl.startsWith('https') || baseUrl.startsWith('wss') ? 'wss' : 'ws'
+        const host = baseUrl.replace(/^https?:\/\//, '').replace(/^wss?:\/\//, '')
         const wsUrl = `${protocol}://${host}/api/ws/game/${sessionId}/${playerId}`
         
         console.log('[WebSocket] Connecting to:', wsUrl)
