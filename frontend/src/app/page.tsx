@@ -29,6 +29,15 @@ export default function Home() {
     router.push(`/game/${player1Id}/${player2Id}`)
   }
 
+  const handlePlayVsGoat = () => {
+    if (!player1Id.trim()) {
+      setError('Please enter Player 1 ID first')
+      return
+    }
+    setError('')
+    router.push(`/game/${player1Id}/Goat_Bot`)
+  }
+
   return (
     <main className="min-h-screen bg-dark-bg">
       {/* Header */}
@@ -129,11 +138,25 @@ export default function Home() {
 
               <Button
                 onClick={handleStartGame}
-                className="w-full mt-6"
+                className="w-full mt-2"
                 size="lg"
               >
                 Start Auction
               </Button>
+
+              <div className="relative flex py-2 items-center">
+                <div className="flex-grow border-t border-dark-card"></div>
+                <span className="flex-shrink mx-4 text-text-secondary text-xs uppercase">Or</span>
+                <div className="flex-grow border-t border-dark-card"></div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handlePlayVsGoat}
+                className="w-full bg-dark-bg-alt hover:bg-dark-card text-text-primary border border-accent-terracotta/50 py-3.5 px-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer"
+              >
+                <span>🤖 Play vs AI (Goat 🐐)</span>
+              </button>
             </div>
           </Card>
         </div>
