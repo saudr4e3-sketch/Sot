@@ -1,4 +1,4 @@
-"""Turn-Based Auction System
+"""Turn-Based Auction System with Real Players Support
 
 Auction Sequence (MUST FOLLOW EXACTLY):
 1. Goalkeeper (GK) - 1 card
@@ -18,6 +18,9 @@ Turn-Based Rules:
 
 import time
 import logging
+import json
+import os
+import random
 from typing import Dict, List, Optional, Tuple
 from enum import Enum
 from app.utils.constants import (
@@ -28,6 +31,20 @@ from app.utils.constants import (
 from app.game.mystery_card import MysteryCardGenerator
 
 logger = logging.getLogger(__name__)
+
+# تحميل قاعدة بيانات اللاعبين الحقيقيين بأمان من ملف JSON
+players_file_path = os.path.join(os.path.dirname(__file__), "../data/players.json")
+try:
+    if os.path.exists(players_file_path):
+        with open(players_file_path, "r", encoding="utf-8") as f:
+            REAL_PLAYERS_DB = json.load(f)
+            logger.info("Successfully loaded players.json database.")
+    else:
+        REAL_PLAYERS_DB = {}
+        logger.warning("players.json file not found, using fallback defaults.")
+except Exception as e:
+    logger.error(f"Error loading players.json: {e}")
+    REAL_PLAYERS_DB = {}
 
 
 class AuctionStatus(str, Enum):
@@ -235,11 +252,14 @@ class AuctionManager:
         position = AUCTION_POSITIONS[self.current_index] if self.current_index < len(AUCTION_POSITIONS) else "complete"
         time_remaining = max(0, AUCTION_TIMER - (time.time() - self.last_bid_time)) if self.last_bid_time else AUCTION_TIMER
         
-        # بيانات اللاعب الحالي لعرضها بوضوح في الواجهة
+        # جلب لاعب حقيقي عشوائي من قاعدة بيانات players.json حسب المركز الحالي
+        position_pool = REAL_PLAYERS_DB.get(position, [{"name": f"Star {position}", "rating": 85}])
+        selected_player = random.choice(position_pool) if position_pool else {"name": f"Star {position}", "rating": 85}
+
         current_player_info = {
-            "name": f"Star {position} Player",
+            "name": selected_player.get("name", f"Star {position}"),
             "position": position,
-            "rating": 85 if self.current_index == 0 else 82
+            "rating": selected_player.get("rating", 85)
         }
 
         return {
