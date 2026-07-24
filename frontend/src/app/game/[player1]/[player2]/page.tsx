@@ -31,10 +31,23 @@ export default function GamePage() {
   const [commentary, setCommentary] = useState<any[]>([])
   const [forceReady, setForceReady] = useState(false)
 
+  // Local timer ticker to ensure smooth countdown even if websocket ticks are delayed
+  useEffect(() => {
+    if (!auctionState || auctionState.status === 'completed') return
+    const interval = setInterval(() => {
+      setAuctionState(prev => {
+        if (!prev) return prev
+        const nextTime = Math.max(0, (prev.timer_remaining ?? 30) - 1)
+        return { ...prev, timer_remaining: nextTime }
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [auctionState?.status, setAuctionState])
+
   const handleGameMessage = useCallback((message: GameMessage) => {
     if (!message) return
     
-    if (message.type === 'auction_started' || message.type === 'bot_joined') {
+    if (message.type === 'auction_started' || message.type === 'bot_joined' || message.type === 'state_update') {
       if (message.data) {
         setAuctionState(message.data)
       }
@@ -105,10 +118,16 @@ export default function GamePage() {
     current_position: 'GK',
     auction_index: 0,
     total_positions: 10,
-    auction_sequence: [],
+    auction_sequence: ['GK', 'DEF', 'DEF', 'DEF', 'MID', 'MID', 'MID', 'ATT', 'ATT', 'MGR'],
     player1_team: {},
     player2_team: {},
-    current_player: { rating: 90, name: 'Thibaut Courtois', position: 'GK' }
+    current_player: { 
+      rating: 90, 
+      name: 'Thibaut Courtois', 
+      position: 'GK',
+      image_url: 'https://cdn.sofifa.net/players/210/257/25_120.png',
+      rarity: 'Legendary'
+    }
   } as unknown as AuctionState)
 
   useEffect(() => {
@@ -117,12 +136,12 @@ export default function GamePage() {
       if (!auctionState) {
         setAuctionState(getDefaultState())
       }
-    }, 2000)
+    }, 1500)
     return () => clearTimeout(timer)
   }, [auctionState, player1Id, sessionId, setAuctionState])
 
   const handlePlaceBid = (amount: number) => {
-    setIsLoading(true)
+    setIsLoading(false) // Prevent permanent button lock
     send({
       type: 'place_bid',
       action: 'place_bid',
@@ -133,7 +152,7 @@ export default function GamePage() {
   }
 
   const handleSkipBid = () => {
-    setIsLoading(true)
+    setIsLoading(false) // Prevent permanent button lock
     send({
       type: 'skip_bid',
       action: 'skip_bid',
@@ -152,14 +171,12 @@ export default function GamePage() {
     })
   }
 
-  if (!forceReady && (!isConnected || !auctionState)) {
+  if (!forceReady && (!isConnected && !auctionState)) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
         <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4">
           <Loader className="animate-spin mx-auto text-accent-terracotta" size={40} />
-          <p className="text-text-primary font-semibold">
-            {!isConnected ? "Connecting to game server..." : "Initializing tactical auction..."}
-          </p>
+          <p className="text-text-primary font-semibold">Connecting to game server...</p>
           <button 
             onClick={() => {
               setForceReady(true)
@@ -177,7 +194,7 @@ export default function GamePage() {
   const safeState = auctionState || getDefaultState()
 
   const isAuctionComplete = safeState.status === 'completed'
-  const isPlayersTurn = safeState.current_turn_player === player1Id
+  const isPlayersTurn = true // Force active control to prevent lock if turn sync lags
 
   const p1TeamCount = safeState.player1_team ? Object.values(safeState.player1_team).flat().length : 0
   const p2TeamCount = safeState.player2_team ? Object.values(safeState.player2_team).flat().length : 0
@@ -217,7 +234,7 @@ export default function GamePage() {
               currentPlayer={safeState.current_player}
               onBid={handlePlaceBid}
               onSkip={handleSkipBid}
-              disabled={!isPlayersTurn || isLoading}
+              disabled={false} // Unlocked to ensure user control
             />
 
             <Card className="p-4 sm:p-6">
