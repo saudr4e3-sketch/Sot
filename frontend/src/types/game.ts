@@ -203,6 +203,10 @@ export type AuctionPhase =
   | 'mystery'
 
 export interface AuctionState {
+  // ===== PLAYER IDENTIFIERS =====
+  player1_id: string
+  player2_id: string
+  
   // Session Info
   session_id: string
   status: AuctionStatus
@@ -227,7 +231,7 @@ export interface AuctionState {
   turn_started_at?: string
   turn_timeout_seconds?: number
   
-  // ===== FINANCIAL STATE (NEW) =====
+  // ===== FINANCIAL STATE =====
   // Player 1 Budget
   player1_budget: number
   player1_total_spent: number
