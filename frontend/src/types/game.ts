@@ -818,9 +818,7 @@ export const GAME_CONSTANTS = {
 // ==================== Export All ====================
 
 export type {
-  // Re-export utility types
-  Position,
-  Rarity,
+  // Re-export utility types (إزالة Position و Rarity من هنا لمنع التكرار)
   MatchWinner,
   TeamSide,
   BidType,
