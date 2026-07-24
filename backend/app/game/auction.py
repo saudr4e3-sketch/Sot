@@ -235,6 +235,13 @@ class AuctionManager:
         position = AUCTION_POSITIONS[self.current_index] if self.current_index < len(AUCTION_POSITIONS) else "complete"
         time_remaining = max(0, AUCTION_TIMER - (time.time() - self.last_bid_time)) if self.last_bid_time else AUCTION_TIMER
         
+        # بيانات اللاعب الحالي لعرضها بوضوح في الواجهة
+        current_player_info = {
+            "name": f"Star {position} Player",
+            "position": position,
+            "rating": 85 if self.current_index == 0 else 82
+        }
+
         return {
             "session_id": self.session_id,
             "status": self.status.value,
@@ -247,7 +254,8 @@ class AuctionManager:
             "timer_remaining": time_remaining,
             "player1_team": self.player1_team,
             "player2_team": self.player2_team,
-            "auction_sequence": AUCTION_POSITIONS
+            "auction_sequence": AUCTION_POSITIONS,
+            "current_player": current_player_info
         }
     
     def get_team_stats(self, player_id: str) -> Dict:
