@@ -204,9 +204,9 @@ export type AuctionPhase =
 
 export interface AuctionState {
   // ===== PLAYER IDENTIFIERS =====
-  player1_id: string
-  player2_id: string
-  
+  player1_id?: string
+  player2_id?: string
+
   // Session Info
   session_id: string
   status: AuctionStatus
@@ -785,8 +785,8 @@ export type GameAction =
 // ==================== Utility Types ====================
 
 export type Position = 'GK' | 'DEF' | 'MID' | 'ATT' | 'MGR'
-export type Rarity = 'Legendary' | 'Medium' | 'Weak'
-export type Player = 'player1' | 'player2'
+export type Rarity = 'Legendary' | 'Medium' | 'Weak
+export type GameRolePlayer = 'player1' | 'player2'
 export type MatchWinner = 'player1' | 'player2' | 'draw'
 export type TeamSide = 'home' | 'away' | 'player1' | 'player2'
 export type BidType = 'standard' | 'counter' | 'aggressive'
