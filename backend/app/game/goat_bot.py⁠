@@ -1,40 +1,64 @@
+"""
+Live Commentary System for OSM FUT Dual Battle
+Generates real-time dynamic commentary for auctions and matches.
+"""
+
 import random
+import logging
 
-class GoatBot:
-    def __init__(self):
-        self.name = "Goat 🐐"
-        self.strategy = "aggressive"
+logger = logging.getLogger(__name__)
 
-    def decide_bid(self, current_bid: int, player_rating: int, max_budget: int) -> int:
-        """
-        منطق مزايدة بوت Goat بناءً على تقييم اللاعب والميزانية الحالية
-        """
-        if current_bid >= max_budget:
-            return 0  # انسحب إذا تجاوزت الميزانية
+class CommentaryEngine:
+    """Generates dynamic live commentary for auctions and match simulations"""
+    
+    @staticmethod
+    def get_auction_commentary(event_type: str, player_name: str, position: str, amount: float = 0.0) -> str:
+        """Generate commentary for auction events
+        
+        Args:
+            event_type: Type of event (start, bid, skip, win, mystery)
+            player_name: Name of the player card
+            position: Player position (GK, DEF, MID, ATT, MGR)
+            amount: Bid amount if applicable
             
-        # إذا كان اللاعب ممتازاً، يزايد بقوة ذكية
-        if player_rating >= 85:
-            increment = random.randint(3, 8)
-        else:
-            increment = random.randint(1, 4)
-            
-        next_bid = current_bid + increment
-        if next_bid > max_budget:
-            return max_budget
-            
-        return next_bid
-
-    def select_mystery_card(self):
+        Returns:
+            Commentary string in Arabic/English mix style suitable for sports cast
         """
-        احتمالات بطاقات الغموض الخاصة بـ Goat (مطابقة لقواعد اللعبة)
-        30% أسطوري، 30% متوسط، 40% ضعيف
-        """
-        roll = random.random()
-        if roll < 0.3:
-            return {"tier": "Legendary", "rating": 92}
-        elif roll < 0.6:
-            return {"tier": "Medium", "rating": 83}
-        else:
-            return {"tier": "Weak", "rating": 75}
+        comments = {
+            "start": [
+                f"🔥 نزلت بطاقة جديدة في المزاد! الكشاف ينادي على الاسطورة {player_name} في مركز ({position})!",
+                f"⚡ معركة جديدة تبدأ الآن في المزاد على اللاعب المميز {player_name}!",
+                f"🎯 الأنظار تتجه نحو بطاقة {position} الحالية: النجم {player_name}!"
+            ],
+            "bid": [
+                f"💪 مزايدة قوية بقيمة {amount} مليون على النجم {player_name}! الملعب يشتعل!",
+                f"🚀 إعصار المزايدات يستمر! عرض جديد بقيمة {amount} على {player_name}!",
+                f"🔥 تنافس شرس جداً! تم رفع السعر إلى {amount} من أجل عيون {player_name}!"
+            ],
+            "skip": [
+                f"⏸️ تراجع مؤقت أو تفكير عميق... اللاعب يمرر الدور في المزاد!",
+                f"🤫 هدوء حذر في القاعة، هل يحضر أحدهم مفاجأة كبرى؟",
+                f"📉 تخطي مؤقت، والمزاد يقترب من حسم مصير البطاقة!"
+            ],
+            "win": [
+                f"🏆 وووصلت! تم حسم الصفقة وانضمام {player_name} بنجاح إلى التشكيلة!",
+                f"👑 صفقة مدوية! المشتري يظن أنه ضمن الأفضل بعد خطف بطاقة {player_name}!",
+                f"⭐ إغلاق المزاد بنجاح! {player_name} يرتدي القميص الجديد رسمياً!"
+            ],
+            "mystery": [
+                f"🎲 خسرت المزاد؟ لا توقف! تم سحب 'بطاقة غامضة' فورية لتعويض الخسارة!",
+                f"🔮 صندوق المفاجآت يفتح أبوابه ويمنح الخاسر بطاقة غامضة جديدة!",
+                f"✨ بطاقة غموض سحرية تظهر في سجلات الخاسر لدعم الفريق!"
+            ]
+        }
+        
+        event_list = comments.get(event_type, [f"⚽ الحدث مستمر في المزاد على {player_name}"])
+        return random.choice(event_list)
 
-goat_ai = GoatBot()
+    @staticmethod
+    def get_match_commentary(minute: int, event_desc: str) -> str:
+        """Generate commentary for match simulation events"""
+        return f"⏱️ الدقيقة {minute}: {event_desc}"
+
+# Export instance
+commentary_engine = CommentaryEngine()
