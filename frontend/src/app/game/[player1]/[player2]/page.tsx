@@ -31,11 +31,11 @@ export default function GamePage() {
   const [commentary, setCommentary] = useState<any[]>([])
   const [forceReady, setForceReady] = useState(false)
 
-  // Local timer ticker to ensure smooth countdown even if websocket ticks are delayed
+  // Local timer ticker with explicit TypeScript typing for prev
   useEffect(() => {
     if (!auctionState || auctionState.status === 'completed') return
     const interval = setInterval(() => {
-      setAuctionState(prev => {
+      setAuctionState((prev: AuctionState | null) => {
         if (!prev) return prev
         const nextTime = Math.max(0, (prev.timer_remaining ?? 30) - 1)
         return { ...prev, timer_remaining: nextTime }
@@ -141,7 +141,7 @@ export default function GamePage() {
   }, [auctionState, player1Id, sessionId, setAuctionState])
 
   const handlePlaceBid = (amount: number) => {
-    setIsLoading(false) // Prevent permanent button lock
+    setIsLoading(false)
     send({
       type: 'place_bid',
       action: 'place_bid',
@@ -152,7 +152,7 @@ export default function GamePage() {
   }
 
   const handleSkipBid = () => {
-    setIsLoading(false) // Prevent permanent button lock
+    setIsLoading(false)
     send({
       type: 'skip_bid',
       action: 'skip_bid',
@@ -194,7 +194,7 @@ export default function GamePage() {
   const safeState = auctionState || getDefaultState()
 
   const isAuctionComplete = safeState.status === 'completed'
-  const isPlayersTurn = true // Force active control to prevent lock if turn sync lags
+  const isPlayersTurn = true
 
   const p1TeamCount = safeState.player1_team ? Object.values(safeState.player1_team).flat().length : 0
   const p2TeamCount = safeState.player2_team ? Object.values(safeState.player2_team).flat().length : 0
@@ -234,7 +234,7 @@ export default function GamePage() {
               currentPlayer={safeState.current_player}
               onBid={handlePlaceBid}
               onSkip={handleSkipBid}
-              disabled={false} // Unlocked to ensure user control
+              disabled={false}
             />
 
             <Card className="p-4 sm:p-6">
