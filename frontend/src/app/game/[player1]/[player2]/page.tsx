@@ -31,18 +31,20 @@ export default function GamePage() {
   const [commentary, setCommentary] = useState<any[]>([])
   const [forceReady, setForceReady] = useState(false)
 
-  // Local timer ticker with explicit TypeScript typing for prev
+  // Local timer ticker
   useEffect(() => {
     if (!auctionState || auctionState.status === 'completed') return
     const interval = setInterval(() => {
-      setAuctionState((prev: AuctionState | null) => {
-        if (!prev) return prev
-        const nextTime = Math.max(0, (prev.timer_remaining ?? 30) - 1)
-        return { ...prev, timer_remaining: nextTime }
-      })
+      const currentTime = auctionState.timer_remaining ?? 30
+      if (currentTime > 0) {
+        setAuctionState({
+          ...auctionState,
+          timer_remaining: currentTime - 1
+        })
+      }
     }, 1000)
     return () => clearInterval(interval)
-  }, [auctionState?.status, setAuctionState])
+  }, [auctionState, setAuctionState])
 
   const handleGameMessage = useCallback((message: GameMessage) => {
     if (!message) return
