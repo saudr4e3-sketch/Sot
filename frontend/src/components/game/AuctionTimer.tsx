@@ -185,8 +185,8 @@ const AuctionTimer: React.FC<AuctionTimerProps> = ({
           <div className="pt-2 border-t border-dark-card">
             <Button
               onClick={onSkip}
-              variant="outline"
-              className="w-full border-rose-500/50 text-rose-400 hover:bg-rose-500/10 font-bold py-3"
+              variant="secondary"
+              className="w-full border border-rose-500/50 text-rose-400 hover:bg-rose-500/10 font-bold py-3"
               disabled={disabled}
             >
               Skip Turn / Pass Card (Trigger Mystery Card)
