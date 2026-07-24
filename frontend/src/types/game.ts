@@ -785,7 +785,7 @@ export type GameAction =
 // ==================== Utility Types ====================
 
 export type Position = 'GK' | 'DEF' | 'MID' | 'ATT' | 'MGR'
-export type Rarity = 'Legendary' | 'Medium' | 'Weak
+export type Rarity = 'Legendary' | 'Medium' | 'Weak'
 export type GameRolePlayer = 'player1' | 'player2'
 export type MatchWinner = 'player1' | 'player2' | 'draw'
 export type TeamSide = 'home' | 'away' | 'player1' | 'player2'
