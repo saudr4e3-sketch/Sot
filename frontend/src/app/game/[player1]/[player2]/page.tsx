@@ -35,17 +35,25 @@ export default function GamePage() {
     if (!message) return
     
     if (message.type === 'auction_started' || message.type === 'bot_joined') {
-      if (message.data) setAuctionState(message.data)
+      if (message.data) {
+        setAuctionState(message.data)
+      }
       setIsLoading(false)
       setForceReady(true)
     } else if (message.type === 'bid_placed' || message.type === 'turn_skipped') {
-      if (message.data) setAuctionState(message.data)
+      if (message.data) {
+        setAuctionState(message.data)
+      }
       setIsLoading(false)
     } else if (message.type === 'auction_completed') {
-      if (message.data) setAuctionState(message.data.state || message.data)
+      if (message.data) {
+        setAuctionState(message.data.state || message.data)
+      }
       setIsLoading(false)
     } else if (message.type === 'match_completed') {
-      if (message.data?.commentary) setCommentary(message.data.commentary)
+      if (message.data?.commentary) {
+        setCommentary(message.data.commentary)
+      }
       setIsLoading(false)
     } else if (message.error) {
       setError(message.error)
@@ -87,7 +95,7 @@ export default function GamePage() {
     }
   }, [isConnected, isInitialized, player2Id, send, setIsLoading, sessionId, player1Id])
 
-  // مؤقت حماية إجباري لضمان عدم حدوث أي استثناء أو تعليق
+  // ضمان إعطاء حالة افتراضية آمنة لمنع انهيار الواجهة
   useEffect(() => {
     const timer = setTimeout(() => {
       setForceReady(true)
@@ -103,7 +111,7 @@ export default function GamePage() {
           current_player: { rating: 80, name: 'Starting Player' }
         } as any)
       }
-    }, 2500)
+    }, 2000)
     return () => clearTimeout(timer)
   }, [auctionState, player1Id, setAuctionState])
 
@@ -138,45 +146,55 @@ export default function GamePage() {
     })
   }
 
-  if (!isConnected && !forceReady) {
+  // شاشة التحميل الآمنة التي تحتوي على خيار تخطي يدوي فوري
+  if (!forceReady && (!isConnected || !auctionState)) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
         <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4">
           <Loader className="animate-spin mx-auto text-accent-terracotta" size={40} />
-          <p className="text-text-primary font-semibold">Connecting to game...</p>
+          <p className="text-text-primary font-semibold">
+            {!isConnected ? "Connecting to game..." : "Initializing auction..."}
+          </p>
           <button 
-            onClick={() => window.location.reload()} 
-            className="text-xs text-accent-terracotta underline block mx-auto cursor-pointer"
+            onClick={() => {
+              setForceReady(true)
+              setAuctionState({
+                status: 'bidding',
+                timer_remaining: 30,
+                highest_bid: 0,
+                current_turn_player: player1Id,
+                current_position: 'GK',
+                player1_team: {},
+                player2_team: {},
+                current_player: { rating: 80, name: 'Starting Player' }
+              } as any)
+            }} 
+            className="w-full py-2 bg-accent-terracotta text-white rounded-lg font-bold text-sm cursor-pointer shadow-md"
           >
-            تحديث الصفحة
+            تخطي الدخول للمزاد فوراً
           </button>
         </Card>
       </div>
     )
   }
 
-  if (!auctionState && !forceReady) {
-    return (
-      <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
-        <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4">
-          <Loader className="animate-spin mx-auto text-accent-terracotta" size={40} />
-          <p className="text-text-primary font-semibold">Initializing auction...</p>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="text-xs text-accent-terracotta underline block mx-auto cursor-pointer"
-          >
-            تخطي والتحديث
-          </button>
-        </Card>
-      </div>
-    )
+  // تجهيز الحالة بأمان تام لتجنب أي أخطاء قراءة
+  const safeState = auctionState || {
+    status: 'bidding',
+    timer_remaining: 30,
+    highest_bid: 0,
+    current_turn_player: player1Id,
+    current_position: 'GK',
+    player1_team: {},
+    player2_team: {},
+    current_player: { rating: 80, name: 'Starting Player' }
   }
 
-  const isAuctionComplete = auctionState?.status === 'completed'
-  const isPlayersTurn = auctionState?.current_turn_player === player1Id
+  const isAuctionComplete = safeState.status === 'completed'
+  const isPlayersTurn = safeState.current_turn_player === player1Id
 
-  const p1TeamCount = auctionState?.player1_team ? Object.values(auctionState.player1_team).flat().length : 0
-  const p2TeamCount = auctionState?.player2_team ? Object.values(auctionState.player2_team).flat().length : 0
+  const p1TeamCount = safeState.player1_team ? Object.values(safeState.player1_team).flat().length : 0
+  const p2TeamCount = safeState.player2_team ? Object.values(safeState.player2_team).flat().length : 0
 
   return (
     <main className="min-h-screen bg-dark-bg">
@@ -203,10 +221,10 @@ export default function GamePage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           <div className="lg:col-span-2 space-y-4 sm:space-y-6">
             <AuctionTimer
-              timeRemaining={Math.max(0, auctionState?.timer_remaining ?? 30)}
-              currentBid={auctionState?.highest_bid ?? 0}
+              timeRemaining={Math.max(0, safeState.timer_remaining ?? 30)}
+              currentBid={safeState.highest_bid ?? 0}
               isYourTurn={isPlayersTurn}
-              currentPosition={auctionState?.current_position ?? 'GK'}
+              currentPosition={safeState.current_position ?? 'GK'}
               onBid={handlePlaceBid}
               onSkip={handleSkipBid}
               disabled={!isPlayersTurn || isLoading}
@@ -234,7 +252,7 @@ export default function GamePage() {
           </div>
 
           <div className="space-y-4 sm:space-y-6">
-            {auctionState && <AuctionProgress state={auctionState} />}
+            <AuctionProgress state={safeState} />
             <CommentaryView commentary={commentary} isLive={!isAuctionComplete} maxHeight="max-h-64 sm:max-h-96" />
 
             {isAuctionComplete && (
