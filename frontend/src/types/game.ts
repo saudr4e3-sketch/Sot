@@ -814,15 +814,3 @@ export const GAME_CONSTANTS = {
   POSITIONS: ['GK', 'DEF', 'MID', 'ATT', 'MGR'] as Position[],
   AUCTION_SEQUENCE: ['GK', 'DEF', 'DEF', 'MID', 'MID', 'ATT', 'ATT', 'MGR', 'MGR'],
 } as const
-
-// ==================== Export All ====================
-
-export type {
-  // Re-export utility types (إزالة Position و Rarity من هنا لمنع التكرار)
-  MatchWinner,
-  TeamSide,
-  BidType,
-  CardStatus,
-  GameMode,
-  Difficulty,
-}
