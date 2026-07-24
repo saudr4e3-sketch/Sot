@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
-import { Clock, TrendingUp, Target, ChevronDown, User } from 'lucide-react'
+import { Clock, TrendingUp, Target, ChevronDown } from 'lucide-react'
 
 interface AuctionTimerProps {
   timeRemaining: number
