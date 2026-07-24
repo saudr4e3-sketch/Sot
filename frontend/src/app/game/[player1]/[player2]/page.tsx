@@ -10,7 +10,7 @@ import AuctionProgress from '@/components/game/AuctionProgress'
 import CommentaryView from '@/components/game/CommentaryView'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
-import { AlertCircle, Loader, Play } from 'lucide-react'
+import { AlertCircle, Loader, Play, Trophy } from 'lucide-react'
 
 export default function GamePage() {
   const params = useParams()
@@ -108,7 +108,7 @@ export default function GamePage() {
     auction_sequence: [],
     player1_team: {},
     player2_team: {},
-    current_player: { rating: 80, name: 'Starting Player', position: 'GK' }
+    current_player: { rating: 90, name: 'Thibaut Courtois', position: 'GK' }
   } as unknown as AuctionState)
 
   useEffect(() => {
@@ -158,16 +158,16 @@ export default function GamePage() {
         <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4">
           <Loader className="animate-spin mx-auto text-accent-terracotta" size={40} />
           <p className="text-text-primary font-semibold">
-            {!isConnected ? "Connecting to game..." : "Initializing auction..."}
+            {!isConnected ? "Connecting to game server..." : "Initializing tactical auction..."}
           </p>
           <button 
             onClick={() => {
               setForceReady(true)
               setAuctionState(getDefaultState())
             }} 
-            className="w-full py-2 bg-accent-terracotta text-white rounded-lg font-bold text-sm cursor-pointer shadow-md"
+            className="w-full py-2.5 bg-accent-terracotta text-white rounded-lg font-bold text-sm cursor-pointer shadow-lg hover:opacity-90 transition"
           >
-            تخطي الدخول للمزاد فوراً
+            Start Auction Now ⚽
           </button>
         </Card>
       </div>
@@ -188,7 +188,10 @@ export default function GamePage() {
         <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-3">
             <div className="text-2xl sm:text-3xl">⚽</div>
-            <h1 className="text-lg sm:text-xl font-bold text-text-primary">OSM FUT Auction</h1>
+            <div>
+              <h1 className="text-lg sm:text-xl font-bold text-text-primary">OSM FUT Dual Battle</h1>
+              <p className="text-xs text-text-secondary">Tactical Live Auction</p>
+            </div>
           </div>
           <div className="text-xs sm:text-sm text-text-secondary hidden sm:block">
             Session: <span className="text-accent-terracotta font-mono">{sessionId ? sessionId.slice(0, 15) : ''}...</span>
@@ -218,21 +221,23 @@ export default function GamePage() {
             />
 
             <Card className="p-4 sm:p-6">
-              <h3 className="font-bold text-text-primary mb-4 text-base sm:text-lg">Team Status</h3>
+              <h3 className="font-bold text-text-primary mb-4 text-base sm:text-lg flex items-center gap-2">
+                <Trophy size={18} className="text-accent-gold" /> Team Status
+              </h3>
               <div className="grid grid-cols-2 gap-3 sm:gap-4">
                 <div className="p-3 sm:p-4 rounded-btn bg-dark-bg-alt border-2 border-accent-terracotta/30">
-                  <p className="text-xs text-text-secondary mb-2">Your Team</p>
+                  <p className="text-xs text-text-secondary mb-2">Your Team ({player1Id})</p>
                   <p className="text-2xl sm:text-3xl font-bold text-accent-terracotta">
-                    {p1TeamCount}
+                    {p1TeamCount} / 10
                   </p>
-                  <p className="text-xs text-text-secondary mt-1">Cards</p>
+                  <p className="text-xs text-text-secondary mt-1">Cards Acquired</p>
                 </div>
                 <div className="p-3 sm:p-4 rounded-btn bg-dark-bg-alt border-2 border-accent-gold/30">
-                  <p className="text-xs text-text-secondary mb-2">Opponent ({player2Id === 'Goat_Bot' ? 'Goat 🐐' : 'Opponent'})</p>
+                  <p className="text-xs text-text-secondary mb-2">Opponent ({player2Id === 'Goat_Bot' ? 'Goat 🐐' : player2Id})</p>
                   <p className="text-2xl sm:text-3xl font-bold text-accent-gold">
-                    {p2TeamCount}
+                    {p2TeamCount} / 10
                   </p>
-                  <p className="text-xs text-text-secondary mt-1">Cards</p>
+                  <p className="text-xs text-text-secondary mt-1">Cards Acquired</p>
                 </div>
               </div>
             </Card>
@@ -245,12 +250,12 @@ export default function GamePage() {
             {isAuctionComplete && (
               <Button
                 onClick={handleStartMatch}
-                className="w-full"
+                className="w-full animate-bounce"
                 size="lg"
                 loading={isLoading}
               >
                 <Play size={18} className="mr-2" />
-                Start Match
+                Start Match & Simulate
               </Button>
             )}
           </div>
@@ -260,7 +265,7 @@ export default function GamePage() {
       <footer className="bg-dark-bg-alt border-t border-dark-card mt-8 sm:mt-12 py-6 sm:py-8">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center text-center sm:text-left gap-4">
           <p className="text-text-secondary text-xs sm:text-sm">
-            © 2024 OSM FUT Dual Battle. All rights reserved.
+            © 2026 OSM FUT Dual Battle. All rights reserved.
           </p>
           <p className="text-text-secondary text-xs sm:text-sm whitespace-nowrap">
             Developer: <span className="text-accent-terracotta font-semibold">Saud Yahya Al-Faifi</span> | <span className="text-accent-terracotta font-semibold">0535103986</span>
