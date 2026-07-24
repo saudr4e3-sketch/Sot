@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { useGameStore } from '@/store/gameStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { GameMessage } from '@/types/game'
+import { GameMessage, AuctionState } from '@/types/game'
 import AuctionTimer from '@/components/game/AuctionTimer'
 import AuctionProgress from '@/components/game/AuctionProgress'
 import CommentaryView from '@/components/game/CommentaryView'
@@ -95,25 +95,31 @@ export default function GamePage() {
     }
   }, [isConnected, isInitialized, player2Id, send, setIsLoading, sessionId, player1Id])
 
-  // ضمان إعطاء حالة افتراضية آمنة لمنع انهيار الواجهة
+  const getDefaultState = (): AuctionState => ({
+    session_id: sessionId,
+    status: 'bidding',
+    timer_remaining: 30,
+    highest_bid: 0,
+    highest_bidder: null,
+    current_turn_player: player1Id,
+    current_position: 'GK',
+    auction_index: 0,
+    total_positions: 10,
+    auction_sequence: [],
+    player1_team: {},
+    player2_team: {},
+    current_player: { rating: 80, name: 'Starting Player', position: 'GK' }
+  } as unknown as AuctionState)
+
   useEffect(() => {
     const timer = setTimeout(() => {
       setForceReady(true)
       if (!auctionState) {
-        setAuctionState({
-          status: 'bidding',
-          timer_remaining: 30,
-          highest_bid: 0,
-          current_turn_player: player1Id,
-          current_position: 'GK',
-          player1_team: {},
-          player2_team: {},
-          current_player: { rating: 80, name: 'Starting Player' }
-        } as any)
+        setAuctionState(getDefaultState())
       }
     }, 2000)
     return () => clearTimeout(timer)
-  }, [auctionState, player1Id, setAuctionState])
+  }, [auctionState, player1Id, sessionId, setAuctionState])
 
   const handlePlaceBid = (amount: number) => {
     setIsLoading(true)
@@ -146,7 +152,6 @@ export default function GamePage() {
     })
   }
 
-  // شاشة التحميل الآمنة التي تحتوي على خيار تخطي يدوي فوري
   if (!forceReady && (!isConnected || !auctionState)) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
@@ -158,16 +163,7 @@ export default function GamePage() {
           <button 
             onClick={() => {
               setForceReady(true)
-              setAuctionState({
-                status: 'bidding',
-                timer_remaining: 30,
-                highest_bid: 0,
-                current_turn_player: player1Id,
-                current_position: 'GK',
-                player1_team: {},
-                player2_team: {},
-                current_player: { rating: 80, name: 'Starting Player' }
-              } as any)
+              setAuctionState(getDefaultState())
             }} 
             className="w-full py-2 bg-accent-terracotta text-white rounded-lg font-bold text-sm cursor-pointer shadow-md"
           >
@@ -178,17 +174,7 @@ export default function GamePage() {
     )
   }
 
-  // تجهيز الحالة بأمان تام لتجنب أي أخطاء قراءة
-  const safeState = auctionState || {
-    status: 'bidding',
-    timer_remaining: 30,
-    highest_bid: 0,
-    current_turn_player: player1Id,
-    current_position: 'GK',
-    player1_team: {},
-    player2_team: {},
-    current_player: { rating: 80, name: 'Starting Player' }
-  }
+  const safeState = auctionState || getDefaultState()
 
   const isAuctionComplete = safeState.status === 'completed'
   const isPlayersTurn = safeState.current_turn_player === player1Id
