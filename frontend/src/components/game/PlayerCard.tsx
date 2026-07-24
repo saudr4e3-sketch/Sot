@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
 import Card from '@/components/ui/Card'
-import { AlertCircle, Star, Shield, Zap, Award, Flame, TrendingUp, Activity, BarChart2 } from 'lucide-react'
+import { AlertCircle, Star, Shield, Zap, Award, Flame, TrendingUp, Activity, BarChart2, User, ImageOff } from 'lucide-react'
 
 interface PlayerCardProps {
   name: string
@@ -41,6 +41,98 @@ const rarityEmoji = {
   'Weak': '⭐⭐⭐ (Developing Challenger)',
 }
 
+const POSITION_FALLBACKS: Record<string, string> = {
+  'GK': 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=600&q=80',
+  'DEF': 'https://images.unsplash.com/photo-1543326727-cf6c39e8f3b8?auto=format&fit=crop&w=600&q=80',
+  'MID': 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&w=600&q=80',
+  'ATT': 'https://images.unsplash.com/photo-1431324155629-1a6deb1dec8d?auto=format&fit=crop&w=600&q=80',
+}
+
+const DEFAULT_FALLBACK = 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=600&q=80'
+
+const imageCache = new Map<string, { loaded: boolean; timestamp: number }>()
+const CACHE_DURATION = 5 * 60 * 1000
+
+const normalizeImageUrl = (url: string | undefined, position?: string): { url: string; isValid: boolean } => {
+  if (!url || url.trim() === '') {
+    return { url: getPositionFallback(position), isValid: false }
+  }
+
+  const trimmedUrl = url.trim()
+
+  try {
+    new URL(trimmedUrl)
+    
+    if (trimmedUrl.includes('sofifa') || trimmedUrl.includes('eaassets')) {
+      const secureUrl = trimmedUrl.replace('http://', 'https://')
+      const separator = secureUrl.includes('?') ? '&' : '?'
+      return { url: `${secureUrl}${separator}t=${Date.now()}`, isValid: true }
+    }
+
+    return { url: trimmedUrl, isValid: true }
+  } catch {
+    if (trimmedUrl.startsWith('/')) {
+      return { url: trimmedUrl, isValid: true }
+    }
+    
+    if (/\.(jpg|jpeg|png|gif|webp|svg)($|\?)/i.test(trimmedUrl)) {
+      return { url: trimmedUrl, isValid: true }
+    }
+
+    return { url: getPositionFallback(position), isValid: false }
+  }
+}
+
+const getPositionFallback = (position?: string): string => {
+  if (position && POSITION_FALLBACKS[position]) {
+    return POSITION_FALLBACKS[position]
+  }
+  return DEFAULT_FALLBACK
+}
+
+const isImageCached = (url: string): boolean => {
+  const cached = imageCache.get(url)
+  if (!cached) return false
+  return cached.loaded && (Date.now() - cached.timestamp) < CACHE_DURATION
+}
+
+const ImageSkeleton: React.FC = () => (
+  <div className="absolute inset-0 animate-pulse">
+    <div className="w-full h-full bg-gradient-to-br from-dark-bg/80 via-dark-bg-alt/60 to-dark-card/80">
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="relative">
+            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-slate-700/60 to-slate-600/40 border-2 border-slate-500/30 flex items-center justify-center">
+              <User size={40} className="text-slate-500/40" />
+            </div>
+            <div className="absolute inset-0 rounded-full border-2 border-slate-400/20 animate-ping" />
+          </div>
+          <div className="flex gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-slate-500/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+            <div className="w-2 h-2 rounded-full bg-slate-500/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+            <div className="w-2 h-2 rounded-full bg-slate-500/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+)
+
+const ImageErrorState: React.FC<{ onRetry: () => void }> = ({ onRetry }) => (
+  <div className="absolute inset-0 bg-gradient-to-br from-dark-bg/90 via-dark-bg-alt/80 to-dark-card/90 flex items-center justify-center">
+    <div className="flex flex-col items-center gap-2">
+      <ImageOff size={32} className="text-slate-500" />
+      <p className="text-slate-400 text-xs font-medium">صورة غير متوفرة</p>
+      <button
+        onClick={onRetry}
+        className="text-xs text-amber-400 hover:text-amber-300 underline underline-offset-2 font-semibold transition-colors"
+      >
+        إعادة المحاولة
+      </button>
+    </div>
+  </div>
+)
+
 const PlayerCard: React.FC<PlayerCardProps> = ({
   name,
   position,
@@ -61,28 +153,101 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
   defending = 80,
   physical = 83,
 }) => {
-  const [imageLoaded, setImageLoaded] = useState(false)
-  const fallbackImage = `https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=600&q=80`
-  const cardImage = image_url || fallbackImage
+  const [imageState, setImageState] = useState<'loading' | 'loaded' | 'error' | 'cached'>('loading')
+  const [retryCount, setRetryCount] = useState(0)
+  const [currentImageUrl, setCurrentImageUrl] = useState<string>('')
+
+  const processedImage = useMemo(() => {
+    const { url, isValid } = normalizeImageUrl(image_url, position)
+    
+    if (isImageCached(url)) {
+      setImageState('cached')
+    } else {
+      setImageState('loading')
+    }
+    
+    setCurrentImageUrl(url)
+    return { url, isValid }
+  }, [image_url, position, retryCount])
+
+  const handleImageError = useCallback((e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    const target = e.currentTarget
+    const maxRetries = 3
+    
+    if (retryCount < maxRetries) {
+      const backoffDelay = Math.pow(2, retryCount) * 1000
+      
+      setTimeout(() => {
+        setRetryCount(prev => prev + 1)
+      }, backoffDelay)
+      
+      imageCache.set(currentImageUrl, { loaded: false, timestamp: Date.now() })
+    } else {
+      const fallbackUrl = getPositionFallback(position)
+      target.src = fallbackUrl
+      setCurrentImageUrl(fallbackUrl)
+      setImageState('error')
+      
+      imageCache.set(fallbackUrl, { loaded: true, timestamp: Date.now() })
+    }
+  }, [retryCount, currentImageUrl, position])
+
+  const handleImageLoad = useCallback(() => {
+    setImageState('loaded')
+    imageCache.set(currentImageUrl, { loaded: true, timestamp: Date.now() })
+  }, [currentImageUrl])
+
+  const handleManualRetry = useCallback(() => {
+    setRetryCount(0)
+    setImageState('loading')
+    const { url } = normalizeImageUrl(image_url, position)
+    setCurrentImageUrl(url)
+    imageCache.delete(url)
+  }, [image_url, position])
+
+  const displayImageUrl = useMemo(() => {
+    if (imageState === 'cached') return currentImageUrl
+    
+    if (retryCount > 0 && currentImageUrl) {
+      const separator = currentImageUrl.includes('?') ? '&' : '?'
+      return `${currentImageUrl}${separator}_retry=${retryCount}&_t=${Date.now()}`
+    }
+    
+    return currentImageUrl
+  }, [currentImageUrl, imageState, retryCount])
 
   return (
     <div className={`rounded-3xl overflow-hidden border-2 transition-all duration-300 transform hover:scale-[1.02] ${rarityColors[rarity]}`}>
-      {/* Top Banner & FUT Card Header */}
       <div className="relative h-64 bg-gradient-to-tr from-dark-bg via-dark-bg-alt to-dark-card overflow-hidden flex items-center justify-center border-b border-dark-card/60">
         <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px]"></div>
         
+        {imageState === 'loading' && !isImageCached(currentImageUrl) && (
+          <ImageSkeleton />
+        )}
+        
+        {imageState === 'error' && retryCount >= 3 && (
+          <ImageErrorState onRetry={handleManualRetry} />
+        )}
+        
         <img
-          src={cardImage}
+          src={displayImageUrl}
           alt={name}
-          onLoad={() => setImageLoaded(true)}
-          className={`w-full h-full object-cover transition-opacity duration-500 ${imageLoaded ? 'opacity-90' : 'opacity-40'}`}
-          onError={(e) => {
-            e.currentTarget.src = fallbackImage
+          onLoad={handleImageLoad}
+          onError={handleImageError}
+          className={`w-full h-full object-cover transition-all duration-500 ease-in-out ${
+            imageState === 'loaded' || imageState === 'cached'
+              ? 'opacity-90 scale-100' 
+              : 'opacity-0 scale-95'
+          }`}
+          loading="lazy"
+          decoding="async"
+          style={{
+            aspectRatio: '1/1',
+            objectFit: 'cover',
           }}
         />
 
-        {/* FUT Rating & Position Badge Box */}
-        <div className="absolute top-4 left-4 bg-slate-950/90 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-amber-400/50 text-center shadow-xl">
+        <div className="absolute top-4 left-4 bg-slate-950/90 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-amber-400/50 text-center shadow-xl z-10">
           <div className="text-2xl font-black text-amber-400 font-mono tracking-tighter leading-none">{rating}</div>
           <div className="text-xs font-extrabold text-slate-100 tracking-wider mt-1">{position}</div>
           {nationality && (
@@ -90,21 +255,18 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
           )}
         </div>
 
-        {/* Rarity Badge Header */}
-        <div className={`absolute top-4 right-4 px-3.5 py-1.5 rounded-full text-xs uppercase tracking-wider ${rarityBadgeColors[rarity]}`}>
+        <div className={`absolute top-4 right-4 px-3.5 py-1.5 rounded-full text-xs uppercase tracking-wider ${rarityBadgeColors[rarity]} z-10`}>
           {rarity}
         </div>
 
-        {/* Mystery Card Indicator Banner */}
         {is_mystery && (
-          <div className="absolute inset-x-0 bottom-0 bg-accent-terracotta/95 backdrop-blur-md py-2 px-4 flex items-center justify-center gap-2 text-white text-xs font-bold animate-pulse shadow-lg">
+          <div className="absolute inset-x-0 bottom-0 bg-accent-terracotta/95 backdrop-blur-md py-2 px-4 flex items-center justify-center gap-2 text-white text-xs font-bold animate-pulse shadow-lg z-10">
             <AlertCircle size={16} />
             <span>Mystery Bonus Card Activated & Secured!</span>
           </div>
         )}
       </div>
 
-      {/* Detailed Card Body Section */}
       <div className="p-5 space-y-4 bg-dark-bg-alt/95 backdrop-blur-lg">
         <div className="border-b border-dark-card pb-3">
           <div className="flex items-center justify-between">
@@ -120,7 +282,6 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
           <h3 className="text-lg sm:text-xl font-black text-text-primary truncate mt-1.5">{name}</h3>
         </div>
 
-        {/* Extended Stats Attributes Grid (FUT Style) */}
         <div className="grid grid-cols-3 gap-2 py-1 bg-dark-bg/60 p-3 rounded-xl border border-dark-card">
           <div className="flex justify-between items-center px-2 py-1 border-r border-dark-card/50">
             <span className="text-[11px] text-text-secondary font-semibold">PAC</span>
@@ -148,7 +309,6 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
           </div>
         </div>
 
-        {/* Additional Metadata Grid */}
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div className="bg-dark-bg p-2.5 rounded-xl border border-dark-card flex flex-col justify-center">
             <span className="text-text-secondary text-[10px] uppercase font-bold tracking-wider">Associated Club</span>
@@ -175,7 +335,6 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
           )}
         </div>
 
-        {/* Comprehensive Rating Footer Bar */}
         <div className="flex justify-between items-center pt-3 border-t border-dark-card">
           <div className="text-[11px] font-bold text-amber-300 tracking-tight flex items-center gap-1">
             <Star size={13} className="fill-amber-300 text-amber-300" /> {rarityEmoji[rarity]}
