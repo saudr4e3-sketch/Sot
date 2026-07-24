@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
-import { Clock, TrendingUp, Target, ChevronDown } from 'lucide-react'
+import { Clock, TrendingUp, Target, ChevronDown, User } from 'lucide-react'
 
 interface AuctionTimerProps {
   timeRemaining: number
   currentBid: number
   isYourTurn: boolean
   currentPosition: string
+  currentPlayer?: { name: string; rating: number }
   onBid: (amount: number) => void
   onSkip: () => void
   disabled?: boolean
@@ -18,6 +19,7 @@ const AuctionTimer: React.FC<AuctionTimerProps> = ({
   currentBid,
   isYourTurn,
   currentPosition,
+  currentPlayer,
   onBid,
   onSkip,
   disabled,
@@ -40,11 +42,21 @@ const AuctionTimer: React.FC<AuctionTimerProps> = ({
 
   return (
     <Card className="p-4 sm:p-6 space-y-4">
-      {/* Position & Timer */}
+      {/* Position, Player Name & Timer */}
       <div className="flex justify-between items-center gap-4">
         <div>
-          <p className="text-xs font-semibold text-text-secondary uppercase mb-1">Current Position</p>
-          <p className="text-2xl sm:text-3xl font-bold text-accent-terracotta">{currentPosition}</p>
+          <p className="text-xs font-semibold text-text-secondary uppercase mb-1">
+            Current Position: <span className="text-accent-terracotta font-bold">{currentPosition}</span>
+          </p>
+          {/* عرض اسم اللاعب الحقيقي والتقييم هنا */}
+          <div className="flex items-center gap-2 mt-1">
+            <span className="bg-accent-gold/20 text-accent-gold text-xs font-bold px-2 py-0.5 rounded">
+              {currentPlayer?.rating || 85}
+            </span>
+            <p className="text-xl sm:text-2xl font-bold text-text-primary">
+              {currentPlayer?.name || `Star ${currentPosition}`}
+            </p>
+          </div>
         </div>
         
         <div className="text-center">
