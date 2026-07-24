@@ -16,6 +16,7 @@ Turn-Based Rules:
 - Skip button allows pass without bidding
 - Loser receives mystery card immediately
 - AI Bot (Goat_Bot) analyzes market and bids intelligently
+- Timer expiration triggers automatic turn pass or card finalization
 """
 
 import time
@@ -27,7 +28,8 @@ import math
 from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
+from threading import Timer
 from app.utils.constants import (
     AUCTION_POSITIONS,
     AUCTION_TIMER,
@@ -231,28 +233,125 @@ class AuctionStatus(str, Enum):
     COMPLETED = "completed"
 
 
+class TimerState(Enum):
+    """Timer management states"""
+    RUNNING = "running"
+    EXPIRED = "expired"
+    PAUSED = "paused"
+    RESET = "reset"
+
+
 @dataclass
 class PlayerCard:
-    """Represents a player card in auction"""
+    """Represents a player card in auction with limited visible stats"""
     name: str
     position: str
     rating: int
     image: str
+    rarity: str = "Medium"
     nationality: str = "Unknown"
     club: str = "Free Agent"
     age: int = 25
+    # Hidden detailed stats (not sent to frontend)
+    _pace: int = 0
+    _shooting: int = 0
+    _passing: int = 0
+    _dribbling: int = 0
+    _defending: int = 0
+    _physical: int = 0
     
-    def to_dict(self) -> Dict:
-        """Convert to dictionary for JSON serialization"""
-        return {
+    def __post_init__(self):
+        """Generate hidden detailed stats based on rating and position"""
+        if self._pace == 0:
+            self._generate_hidden_stats()
+        self._determine_rarity()
+    
+    def _generate_hidden_stats(self):
+        """Generate realistic hidden stats based on position and rating"""
+        base = self.rating - 10
+        variation = lambda: random.randint(-5, 5)
+        
+        if self.position == "GK":
+            self._pace = base + variation()
+            self._shooting = base - 30 + variation()
+            self._passing = base - 10 + variation()
+            self._dribbling = base - 20 + variation()
+            self._defending = base + 15 + variation()
+            self._physical = base + 10 + variation()
+        elif self.position == "DEF":
+            self._pace = base + 5 + variation()
+            self._shooting = base - 15 + variation()
+            self._passing = base + variation()
+            self._dribbling = base - 5 + variation()
+            self._defending = base + 15 + variation()
+            self._physical = base + 10 + variation()
+        elif self.position == "MID":
+            self._pace = base + 5 + variation()
+            self._shooting = base + variation()
+            self._passing = base + 15 + variation()
+            self._dribbling = base + 10 + variation()
+            self._defending = base - 5 + variation()
+            self._physical = base + variation()
+        elif self.position == "ATT":
+            self._pace = base + 15 + variation()
+            self._shooting = base + 15 + variation()
+            self._passing = base + variation()
+            self._dribbling = base + 10 + variation()
+            self._defending = base - 20 + variation()
+            self._physical = base + variation()
+        elif self.position == "MGR":
+            self._pace = base + variation()
+            self._shooting = base + variation()
+            self._passing = base + 10 + variation()
+            self._dribbling = base + variation()
+            self._defending = base + 5 + variation()
+            self._physical = base + variation()
+        
+        # Clamp values between 1 and 99
+        for attr in ['_pace', '_shooting', '_passing', '_dribbling', '_defending', '_physical']:
+            setattr(self, attr, max(1, min(99, getattr(self, attr))))
+    
+    def _determine_rarity(self):
+        """Determine card rarity based on rating"""
+        if self.rating >= 88:
+            self.rarity = "Legendary"
+        elif self.rating >= 80:
+            self.rarity = "Medium"
+        else:
+            self.rarity = "Weak"
+    
+    def to_dict(self, include_hidden_stats: bool = False) -> Dict:
+        """Convert to dictionary for JSON serialization
+        
+        Args:
+            include_hidden_stats: If True, include detailed stats (for post-auction reveal)
+        """
+        base_dict = {
             "name": self.name,
             "position": self.position,
             "rating": self.rating,
             "image": self.image,
+            "rarity": self.rarity,
             "nationality": self.nationality,
             "club": self.club,
             "age": self.age
         }
+        
+        if include_hidden_stats:
+            base_dict.update({
+                "pace": self._pace,
+                "shooting": self._shooting,
+                "passing": self._passing,
+                "dribbling": self._dribbling,
+                "defending": self._defending,
+                "physical": self._physical
+            })
+        
+        return base_dict
+    
+    def to_public_dict(self) -> Dict:
+        """Convert to dictionary with only publicly visible information"""
+        return self.to_dict(include_hidden_stats=False)
 
 
 @dataclass
@@ -264,6 +363,7 @@ class BotState:
     bluffs_used: int = 0
     last_bid_amount: float = 0.0
     bid_history: List[Dict] = field(default_factory=list)
+    turn_start_time: float = 0.0
     
     def get_remaining_budget(self) -> float:
         """Get remaining budget"""
@@ -284,17 +384,19 @@ class BotState:
         })
     
     def calculate_bid_strategy(self, card: PlayerCard, current_bid: float, 
-                              opponent_budget: float, cards_remaining: int) -> Tuple[float, bool]:
-        """Calculate optimal bid strategy
+                              opponent_budget: float, cards_remaining: int,
+                              turn_elapsed: float = 0.0) -> Tuple[float, bool, float]:
+        """Calculate optimal bid strategy with timing consideration
         
         Args:
             card: Current player card being auctioned
             current_bid: Current highest bid
             opponent_budget: Estimated opponent budget
             cards_remaining: Number of cards remaining in auction
+            turn_elapsed: Time elapsed in current turn
             
         Returns:
-            Tuple of (bid_amount, should_skip)
+            Tuple of (bid_amount, should_skip, response_delay)
         """
         rating_factor = card.rating / 100.0
         position_priority = POSITION_PRIORITY.get(card.position, 0.5)
@@ -305,12 +407,25 @@ class BotState:
         
         competitive_bid = base_value * (1 + random.uniform(0.1, 0.3) * BOT_AGGRESSION_FACTOR)
         
+        # Calculate response delay based on strategy (0.5-3.0 seconds)
+        if current_bid == 0:
+            response_delay = random.uniform(0.5, 1.5)
+        elif current_bid > competitive_bid * 1.5:
+            response_delay = random.uniform(2.0, 3.0)  # Think longer for high bids
+        else:
+            response_delay = random.uniform(0.8, 2.0)
+        
+        # Ensure we don't exceed remaining turn time
+        remaining_turn_time = max(0, AUCTION_TIMER - turn_elapsed)
+        response_delay = min(response_delay, remaining_turn_time - 0.5)
+        response_delay = max(0.3, response_delay)
+        
         should_bluff = random.random() < BOT_BLUFF_CHANCE and current_bid > base_value * 1.5
         
         if should_bluff:
             self.bluffs_used += 1
             logger.info("Goat_Bot decided to bluff and skip bidding")
-            return 0.0, True
+            return 0.0, True, response_delay
         
         if current_bid == 0:
             bid_amount = min(competitive_bid, max_spend_per_card * 0.6)
@@ -319,7 +434,7 @@ class BotState:
             
             if current_bid >= max_bid:
                 logger.info(f"Goat_Bot skipping - bid too high: {current_bid} > {max_bid}")
-                return 0.0, True
+                return 0.0, True, response_delay
             
             min_raise = current_bid * 0.1
             optimal_raise = min(current_bid * 0.25, max_bid - current_bid)
@@ -328,45 +443,141 @@ class BotState:
         bid_amount = min(bid_amount, self.get_remaining_budget())
         bid_amount = round(bid_amount, 2)
         
-        return bid_amount, False
+        return bid_amount, False, response_delay
+
+
+class AuctionTimer:
+    """Manages auction turn timing with automatic expiration"""
+    
+    def __init__(self, duration: int = AUCTION_TIMER):
+        self.duration = duration
+        self.start_time: float = 0.0
+        self.state: TimerState = TimerState.RESET
+        self._timer_thread: Optional[Timer] = None
+        self._on_expire_callback: Optional[callable] = None
+    
+    def start(self, on_expire: callable = None) -> None:
+        """Start the timer"""
+        self.start_time = time.time()
+        self.state = TimerState.RUNNING
+        self._on_expire_callback = on_expire
+        
+        # Cancel any existing timer
+        if self._timer_thread:
+            self._timer_thread.cancel()
+        
+        # Start new timer thread for automatic expiration
+        if on_expire:
+            self._timer_thread = Timer(self.duration, self._handle_expiration)
+            self._timer_thread.daemon = True
+            self._timer_thread.start()
+    
+    def _handle_expiration(self) -> None:
+        """Handle timer expiration in separate thread"""
+        self.state = TimerState.EXPIRED
+        if self._on_expire_callback:
+            try:
+                self._on_expire_callback()
+            except Exception as e:
+                logger.error(f"Error in timer expiration callback: {e}")
+    
+    def reset(self) -> None:
+        """Reset the timer"""
+        if self._timer_thread:
+            self._timer_thread.cancel()
+        self.start_time = time.time()
+        self.state = TimerState.RUNNING
+    
+    def pause(self) -> None:
+        """Pause the timer"""
+        if self._timer_thread:
+            self._timer_thread.cancel()
+        self.state = TimerState.PAUSED
+    
+    def stop(self) -> None:
+        """Stop the timer completely"""
+        if self._timer_thread:
+            self._timer_thread.cancel()
+        self.state = TimerState.RESET
+    
+    def get_remaining(self) -> float:
+        """Get remaining time in seconds"""
+        if self.state in [TimerState.RESET, TimerState.PAUSED]:
+            return float(self.duration)
+        if self.state == TimerState.EXPIRED:
+            return 0.0
+        
+        elapsed = time.time() - self.start_time
+        return max(0.0, self.duration - elapsed)
+    
+    def is_expired(self) -> bool:
+        """Check if timer has expired"""
+        if self.state == TimerState.EXPIRED:
+            return True
+        if self.state == TimerState.RUNNING:
+            return self.get_remaining() <= 0.0
+        return False
+    
+    def get_elapsed(self) -> float:
+        """Get elapsed time in seconds"""
+        if self.state in [TimerState.RESET, TimerState.PAUSED]:
+            return 0.0
+        return time.time() - self.start_time
 
 
 class AuctionManager:
-    """Manages turn-based auction logic with AI Bot integration"""
+    """Manages turn-based auction logic with AI Bot integration and precise timer control"""
     
     def __init__(self, session_id: str, player1_id: str, player2_id: str):
         self.session_id = session_id
         self.player1_id = player1_id
         self.player2_id = player2_id
         
+        # Auction progression
         self.current_index = 0
         self.current_turn_player = player1_id
+        
+        # Bid state
         self.highest_bid = 0.0
         self.highest_bidder = None
-        self.last_bid_time = None
         self.status = AuctionStatus.WAITING
         
+        # Timer management
+        self.timer = AuctionTimer(AUCTION_TIMER)
+        self._timer_expired_flag = False
+        self._processing_bot_turn = False
+        
+        # Card management
         self.current_card: Optional[PlayerCard] = None
         self.auction_cards: List[PlayerCard] = []
         self.used_player_names: Dict[str, List[str]] = {pos: [] for pos in AUCTION_POSITIONS}
         
+        # Team management
         self.player1_team: Dict[str, List[Dict]] = {pos: [] for pos in set(AUCTION_POSITIONS)}
         self.player2_team: Dict[str, List[Dict]] = {pos: [] for pos in set(AUCTION_POSITIONS)}
         
+        # Bot state
         self.bot_state = BotState()
         self.opponent_estimated_budget = 100.0
+        
+        # Skip tracking
+        self.consecutive_skips = 0
+        self.MAX_CONSECUTIVE_SKIPS = 2
         
         self._generate_auction_cards()
         logger.info(f"Auction Manager initialized for session {session_id}")
     
     def _generate_auction_cards(self) -> None:
+        """Generate auction cards following the exact sequence"""
         self.auction_cards = []
         for position in AUCTION_POSITIONS:
             card = self._select_random_player(position)
             if card:
                 self.auction_cards.append(card)
+                logger.info(f"Generated card: {card.name} ({card.position}) - Rating: {card.rating} - Rarity: {card.rarity}")
     
     def _select_random_player(self, position: str) -> Optional[PlayerCard]:
+        """Select a random player for given position"""
         position_pool = REAL_PLAYERS_DB.get(position, [])
         if not position_pool:
             return None
@@ -404,239 +615,176 @@ class AuctionManager:
             age=selected.get("age", random.randint(20, 35))
         )
     
+    def _on_timer_expired(self) -> None:
+        """Callback for timer expiration"""
+        self._timer_expired_flag = True
+        logger.info(f"Timer expired for player {self.current_turn_player}")
+    
     def start_auction(self) -> Dict:
+        """Start the auction with the first card"""
         self.status = AuctionStatus.ACTIVE
         self.current_index = 0
         self.current_turn_player = self.player1_id
         self.highest_bid = 0.0
         self.highest_bidder = None
-        self.last_bid_time = time.time()
+        self.consecutive_skips = 0
         
         if self.current_index < len(self.auction_cards):
             self.current_card = self.auction_cards[self.current_index]
         
+        # Start timer for first turn
+        self.timer.start(self._on_timer_expired)
+        
+        logger.info(f"Auction started - Card: {self.current_card.name if self.current_card else 'None'}")
         return self.get_auction_state()
     
+    def _switch_turn(self) -> None:
+        """Switch turn to the other player and reset timer"""
+        old_turn = self.current_turn_player
+        self.current_turn_player = self.player2_id if old_turn == self.player1_id else self.player1_id
+        self.timer.reset()
+        self._timer_expired_flag = False
+        self.status = AuctionStatus.TURN_PASSED
+        
+        logger.info(f"Turn switched from {old_turn} to {self.current_turn_player}")
+    
     def place_bid(self, player_id: str, amount: float) -> Tuple[bool, Dict]:
+        """Place a bid on the current card
+        
+        Args:
+            player_id: ID of player placing the bid
+            amount: Bid amount in millions
+            
+        Returns:
+            Tuple of (success, auction_state)
+        """
+        # Validate auction is active
         if self.status not in [AuctionStatus.ACTIVE, AuctionStatus.BID_PLACED, AuctionStatus.TURN_PASSED]:
-            return False, {"error": "Auction is not active"}
+            logger.warning(f"Bid rejected - auction not active. Status: {self.status}")
+            return False, {"error": "Auction is not active", "state": self.get_auction_state()}
         
+        # Validate it's the player's turn
         if player_id != self.current_turn_player:
-            return False, {"error": "Not your turn"}
+            logger.warning(f"Bid rejected - not player's turn. Expected: {self.current_turn_player}, Got: {player_id}")
+            return False, {"error": "Not your turn", "state": self.get_auction_state()}
         
-        if amount <= self.highest_bid:
-            return False, {"error": f"Bid must be higher than current bid of {self.highest_bid}"}
+        # Validate bid amount
+        min_bid = self.highest_bid + 0.1 if self.highest_bid > 0 else 0.5
+        if amount < min_bid:
+            logger.warning(f"Bid rejected - amount too low. Bid: {amount}, Minimum: {min_bid}")
+            return False, {
+                "error": f"Bid must be at least {min_bid:.1f} million", 
+                "current_highest": self.highest_bid,
+                "state": self.get_auction_state()
+            }
         
+        # Process the bid
         self.highest_bid = amount
         self.highest_bidder = player_id
-        self.last_bid_time = time.time()
         self.status = AuctionStatus.BID_PLACED
+        self.consecutive_skips = 0  # Reset skip counter on bid
         
+        # Update budget tracking
         if player_id == self.player2_id:
             self.bot_state.record_bid(amount)
         else:
             if amount > 0:
                 self.opponent_estimated_budget = max(self.opponent_estimated_budget, amount * 1.5)
         
-        self.current_turn_player = self.player2_id if player_id == self.player1_id else self.player1_id
+        logger.info(f"Bid placed by {player_id}: {amount}M on {self.current_card.name if self.current_card else 'Unknown'}")
         
+        # Switch turn to other player
+        self._switch_turn()
+        
+        # If it's bot's turn, process bot move after delay
         if self.current_turn_player == self.player2_id:
             return self._process_bot_turn()
         
         return True, self.get_auction_state()
     
     def skip_bid(self, player_id: str) -> Tuple[bool, Dict]:
+        """Skip bidding on current turn
+        
+        Args:
+            player_id: ID of player skipping
+            
+        Returns:
+            Tuple of (success, auction_state)
+        """
+        # Validate auction is active
         if self.status not in [AuctionStatus.ACTIVE, AuctionStatus.BID_PLACED, AuctionStatus.TURN_PASSED]:
-            return False, {"error": "Auction is not active"}
+            logger.warning(f"Skip rejected - auction not active. Status: {self.status}")
+            return False, {"error": "Auction is not active", "state": self.get_auction_state()}
         
+        # Validate it's the player's turn
         if player_id != self.current_turn_player:
-            return False, {"error": "Not your turn"}
+            logger.warning(f"Skip rejected - not player's turn. Expected: {self.current_turn_player}, Got: {player_id}")
+            return False, {"error": "Not your turn", "state": self.get_auction_state()}
         
-        if self.highest_bid == 0:
-            self.current_turn_player = self.player2_id if player_id == self.player1_id else self.player1_id
-            self.status = AuctionStatus.TURN_PASSED
-            self.last_bid_time = time.time()
-            
-            if self.current_turn_player == self.player2_id:
-                return self._process_bot_turn()
-            
-            return True, self.get_auction_state()
+        self.consecutive_skips += 1
         
-        return self._finalize_sale()
-    
-    def check_timer_expired(self) -> Tuple[bool, Dict]:
-        if self.last_bid_time is None or self.status == AuctionStatus.COMPLETED:
-            return False, self.get_auction_state()
+        logger.info(f"Player {player_id} skipped. Consecutive skips: {self.consecutive_skips}")
         
-        elapsed = time.time() - self.last_bid_time
-        if elapsed >= AUCTION_TIMER:
-            if self.highest_bid > 0:
-                return True, self._finalize_sale()[1]
-            else:
-                if self.current_turn_player == self.player2_id:
-                    self.current_turn_player = self.player1_id
-                    self.last_bid_time = time.time()
-                    self.status = AuctionStatus.TURN_PASSED
-                    return True, self.get_auction_state()
-                else:
-                    self.current_turn_player = self.player2_id
-                    self.last_bid_time = time.time()
-                    self.status = AuctionStatus.TURN_PASSED
-                    return self._process_bot_turn()
+        # If no bids have been placed and max skips reached, finalize with no winner
+        if self.highest_bid == 0 and self.consecutive_skips >= self.MAX_CONSECUTIVE_SKIPS:
+            logger.info("No bids placed and max skips reached - advancing to next card")
+            return self._advance_to_next_card_no_winner()
         
-        return False, self.get_auction_state()
-    
-    def _process_bot_turn(self) -> Tuple[bool, Dict]:
-        if self.current_card is None:
-            return False, {"error": "No current card"}
+        # If there's a highest bid, finalize the sale
+        if self.highest_bid > 0:
+            return self._finalize_sale()
         
-        cards_remaining = len(self.auction_cards) - self.current_index
-        bid_amount, should_skip = self.bot_state.calculate_bid_strategy(
-            self.current_card,
-            self.highest_bid,
-            self.opponent_estimated_budget,
-            cards_remaining
-        )
+        # Switch turn to other player
+        self._switch_turn()
         
-        time.sleep(random.uniform(0.5, 1.0))
-        
-        if should_skip or bid_amount <= self.highest_bid:
-            return self.skip_bid(self.player2_id)
-        else:
-            return self.place_bid(self.player2_id, bid_amount)
-    
-    def _finalize_sale(self) -> Tuple[bool, Dict]:
-        if self.current_card is None:
-            return False, {"error": "No current card to finalize"}
-        
-        winner = self.highest_bidder
-        loser = self.player2_id if winner == self.player1_id else self.player1_id
-        position = AUCTION_POSITIONS[self.current_index]
-        
-        winner_card = {
-            "type": "auction",
-            "player": self.current_card.to_dict(),
-            "bid_amount": self.highest_bid,
-            "won_at": time.time()
-        }
-        
-        if winner == self.player1_id:
-            self.player1_team[position].append(winner_card)
-        else:
-            self.player2_team[position].append(winner_card)
-        
-        mystery_card = MysteryCardGenerator.generate_mystery_card(position)
-        mystery_card["received_at"] = time.time()
-        mystery_card["auction_position"] = position
-        
-        if loser == self.player1_id:
-            self.player1_team[position].append(mystery_card)
-        else:
-            self.player2_team[position].append(mystery_card)
-        
-        self.status = AuctionStatus.MYSTERY_GENERATED
-        return self._advance_to_next_card()
-    
-    def _advance_to_next_card(self) -> Tuple[bool, Dict]:
-        self.current_index += 1
-        self.highest_bid = 0.0
-        self.highest_bidder = None
-        self.last_bid_time = time.time()
-        
-        if self.current_index >= len(self.auction_cards):
-            self.status = AuctionStatus.COMPLETED
-            self.current_card = None
-            return True, {"auction_completed": True, "state": self.get_auction_state()}
-        
-        self.current_card = self.auction_cards[self.current_index]
-        self.status = AuctionStatus.ACTIVE
-        self.current_turn_player = self.player1_id
+        # If it's bot's turn, process bot move
+        if self.current_turn_player == self.player2_id:
+            return self._process_bot_turn()
         
         return True, self.get_auction_state()
     
-    def get_auction_state(self) -> Dict:
-        position = AUCTION_POSITIONS[self.current_index] if self.current_index < len(AUCTION_POSITIONS) else "complete"
-        time_remaining = max(0, AUCTION_TIMER - (time.time() - self.last_bid_time)) if self.last_bid_time else AUCTION_TIMER
+    def check_timer_expired(self) -> Tuple[bool, Dict]:
+        """Check if timer has expired and handle accordingly
         
-        current_player_info = self.current_card.to_dict() if self.current_card else {
-            "name": f"Unknown {position}",
-            "position": position,
-            "rating": 0,
-            "image": "",
-            "nationality": "Unknown",
-            "club": "Free Agent",
-            "age": 0
-        }
+        Returns:
+            Tuple of (was_handled, auction_state)
+        """
+        # Don't process timer if auction is completed
+        if self.status == AuctionStatus.COMPLETED:
+            return False, self.get_auction_state()
         
-        bot_budget = self.bot_state.get_remaining_budget() if hasattr(self, 'bot_state') else BOT_BUDGET
+        # Check if timer has expired (either through callback or manual check)
+        timer_expired = self._timer_expired_flag or self.timer.is_expired()
         
-        return {
-            "session_id": self.session_id,
-            "status": self.status.value,
-            "current_position": position,
-            "auction_index": self.current_index,
-            "total_positions": len(AUCTION_POSITIONS),
-            "current_turn_player": self.current_turn_player,
-            "highest_bid": self.highest_bid,
-            "highest_bidder": self.highest_bidder,
-            "timer_remaining": round(time_remaining, 1),
-            "timer_duration": AUCTION_TIMER,
-            "player1_team": self.player1_team,
-            "player2_team": self.player2_team,
-            "auction_sequence": AUCTION_POSITIONS,
-            "current_player": current_player_info,
-            "bot_info": {
-                "name": "Goat_Bot",
-                "budget_remaining": round(bot_budget, 2),
-                "cards_won": self.bot_state.cards_won if hasattr(self, 'bot_state') else 0,
-                "strategy": "Advanced AI"
-            },
-            "next_position": AUCTION_POSITIONS[self.current_index + 1] if self.current_index + 1 < len(AUCTION_POSITIONS) else None,
-            "auction_progress": round((self.current_index / len(AUCTION_POSITIONS)) * 100, 1)
-        }
+        if not timer_expired:
+            return False, self.get_auction_state()
+        
+        logger.info(f"Timer expired for player {self.current_turn_player}. Current bid: {self.highest_bid}")
+        
+        # Reset the expired flag
+        self._timer_expired_flag = False
+        
+        # If there's a highest bid, finalize the sale immediately
+        if self.highest_bid > 0:
+            logger.info(f"Timer expired with bid - finalizing sale. Winner: {self.highest_bidder}")
+            return self._finalize_sale()
+        
+        # No bids placed - handle turn switch or card advancement
+        self.consecutive_skips += 1
+        
+        # If max consecutive skips reached with no bids, advance to next card
+        if self.consecutive_skips >= self.MAX_CONSECUTIVE_SKIPS:
+            logger.info("Timer expired with max skips and no bids - advancing to next card")
+            return self._advance_to_next_card_no_winner()
+        
+        # Otherwise, switch turn to other player
+        self._switch_turn()
+        
+        # If it's now bot's turn, process bot move
+        if self.current_turn_player == self.player2_id:
+            return self._process_bot_turn()
+        
+        return True, self.get_auction_state()
     
-    def get_team_stats(self, player_id: str) -> Dict:
-        team = self.player1_team if player_id == self.player1_id else self.player2_team
-        is_bot = player_id == self.player2_id
-        
-        total_cards = sum(len(cards) for cards in team.values())
-        total_spent = sum(
-            card.get("bid_amount", 0) 
-            for cards in team.values() 
-            for card in cards 
-            if card.get("type") == "auction"
-        )
-        
-        ratings = [
-            card.get("player", {}).get("rating", 0)
-            for cards in team.values()
-            for card in cards
-            if card.get("type") == "auction" and "player" in card
-        ]
-        avg_rating = sum(ratings) / len(ratings) if ratings else 0
-        
-        return {
-            "player_id": player_id,
-            "is_bot": is_bot,
-            "player_name": "Goat_Bot" if is_bot else "Human Player",
-            "total_cards": total_cards,
-            "total_spent": round(total_spent, 2),
-            "positions": {
-                pos: {
-                    "count": len(team.get(pos, [])),
-                    "cards": team.get(pos, [])
-                }
-                for pos in TEAM_COMPOSITION
-            },
-            "auction_wins": sum(1 for cards in team.values() for card in cards if card.get("type") == "auction"),
-            "mystery_cards": sum(1 for cards in team.values() for card in cards if card.get("is_mystery", False)),
-            "average_rating": round(avg_rating, 1),
-            "remaining_budget": round(self.bot_state.get_remaining_budget() if is_bot else self.opponent_estimated_budget - total_spent, 2)
-        }
-    
-    def force_complete_auction(self) -> Dict:
-        """Force complete the auction immediately"""
-        self.status = AuctionStatus.COMPLETED
-        self.current_card = None
-        logger.info(f"Auction {self.session_id} was forcefully completed.")
-        return {"auction_completed": True, "state": self.get_auction_state()}
+   
+```
