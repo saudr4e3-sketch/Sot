@@ -1,14 +1,16 @@
 /**
+ * ============================================================================
  * OSM FUT Dual Battle - Comprehensive TypeScript Game Types & Interfaces
  * Version: 1.0.0 Production Ready
  * Developer: Saud Yahya Al-Faifi
+ * ============================================================================
  */
 
 export interface Player {
   id: number
   api_id: number
   name: string
-  position: string
+  position: 'GK' | 'DEF' | 'MID' | 'ATT' | 'MGR' | string
   rating: number
   team: string
   image_url: string
@@ -24,6 +26,7 @@ export interface Player {
   potential?: number
   market_value?: string
   playing_style?: string
+  is_custom?: boolean
 }
 
 export interface Manager {
@@ -37,6 +40,7 @@ export interface Manager {
   rarity: 'Legendary' | 'Medium' | 'Weak'
   preferred_formation?: string
   tactical_style?: string
+  description?: string
 }
 
 export interface Card extends Partial<Player & Manager> {
@@ -45,6 +49,8 @@ export interface Card extends Partial<Player & Manager> {
   acquired_from: 'auction' | 'mystery_card'
   bid_amount?: number
   acquired_at_timestamp?: number
+  card_id?: string
+  serial_number?: number
 }
 
 export interface CurrentPlayerInfo {
@@ -63,11 +69,12 @@ export interface CurrentPlayerInfo {
   physical?: number
   potential?: number
   market_value?: string
+  playing_style?: string
 }
 
 export interface AuctionState {
   session_id: string
-  status: 'waiting' | 'active' | 'bidding' | 'bid_placed' | 'turn_passed' | 'sold' | 'mystery_generated' | 'completed'
+  status: 'waiting' | 'active' | 'bidding' | 'bid_placed' | 'turn_passed' | 'sold' | 'mystery_generated' | 'completed' | string
   current_position: string
   auction_index: number
   total_positions: number
@@ -79,21 +86,25 @@ export interface AuctionState {
   player2_team: Record<string, Card[]>
   auction_sequence: string[]
   current_player?: CurrentPlayerInfo
+  is_auction_finished?: boolean
+  last_activity_timestamp?: number
 }
 
 export interface MatchHighlight {
   minute: number
   actor: string
   description: string
-  team_side: 'home' | 'away'
+  team_side: 'home' | 'away' | 'player1' | 'player2'
   impact_score: number
+  event_category: 'goal' | 'save' | 'foul' | 'card' | 'tactical_shift'
 }
 
 export interface Commentary {
   minute: number
-  type: 'kickoff' | 'action' | 'goal' | 'save' | 'foul' | 'card' | 'halftime' | 'fulltime' | 'tactical_shift'
+  type: 'kickoff' | 'action' | 'goal' | 'save' | 'foul' | 'card' | 'halftime' | 'fulltime' | 'tactical_shift' | string
   text: string
   highlight?: MatchHighlight
+  author?: string
 }
 
 export interface MatchResult {
@@ -112,6 +123,7 @@ export interface MatchResult {
   total_shots_p2?: number
   possession_p1?: number
   possession_p2?: number
+  match_id?: string
 }
 
 export interface GameMessage {
@@ -124,6 +136,7 @@ export interface GameMessage {
   opponent_id?: string
   error?: string
   timestamp?: number
+  status_code?: number
 }
 
 export interface TeamStatistics {
@@ -134,6 +147,7 @@ export interface TeamStatistics {
   mystery_cards: number
   average_rating: number
   total_market_valuation: number
+  tactical_cohesion_score?: number
 }
 
 export interface SessionMetadata {
@@ -142,6 +156,7 @@ export interface SessionMetadata {
   version: string
   active_users_count: number
   websocket_status: 'connected' | 'disconnected' | 'reconnecting'
+  latency_ms?: number
 }
 
 export interface UserProfileConfig {
@@ -152,4 +167,21 @@ export interface UserProfileConfig {
   preferred_roastery: string
   favorite_team: string
   favorite_player: string
+  theme_mode?: 'dark' | 'light'
+}
+
+export interface WebSocketConfigEndpoint {
+  url: string
+  reconnect_interval: number
+  max_retries: number
+  protocols?: string[]
+}
+
+export interface AuctionHistoryItem {
+  round_index: number
+  position: string
+  winner_id: string | null
+  winning_bid: number
+  card_awarded: Card | null
+  timestamp: number
 }
