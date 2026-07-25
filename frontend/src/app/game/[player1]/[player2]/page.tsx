@@ -3,7 +3,7 @@
  * OSM FUT Dual Battle - Enterprise Game Page Component
  * Architecture: Real-time WebSocket Auction & Match Simulation Hub
  * Developer: Saud Yahya Al-Faifi (Phone: 0535103986)
- * Version: 3.0.0 Production Enterprise Grade (WebSocket State Sync & Bot UI)
+ * Version: 3.0.1 Production Enterprise Grade (Type-Safe & WebSocket State Sync)
  * ============================================================================
  */
 
@@ -87,19 +87,18 @@ export default function GamePage() {
 
   /**
    * =========================================================================
-   * CORE: WebSocket Message Handler (محسّن لاستقبال الحزمة الكاملة)
+   * CORE: WebSocket Message Handler (معالجة آمنة ومتوافقة مع TypeScript)
    * =========================================================================
    */
   const handleGameMessage = useCallback((message: GameMessage) => {
     if (!message) return;
     addLog(`📩 Received: ${message.type}`);
 
-    // استخراج البيانات من الحزمة الجديدة
-    const payload = message.data || message.state || message;
+    // استخراج البيانات مع التوافق التام للأنواع (Type Safe)
+    const payload = message.data || (message as any).state || message;
     
-    // تحديث حالة المتجر إذا كانت البيانات جديدة
+    // تحديث حالة المتجر إذا كانت البيانات جديدة وتحتوي على auction_state
     if (payload && payload.auction_state) {
-      // الحزمة الكاملة من الباك-إند
       const newState = {
         ...payload.auction_state,
         session_id: message.session_id || sessionId,
@@ -110,14 +109,13 @@ export default function GamePage() {
         current_turn_player: payload.auction_state.current_turn_player || player1Id,
       };
       
-      // منع التحديث بنفس البيانات
+      // منع التحديث المتكرر لنفس الحالة
       if (JSON.stringify(newState) !== JSON.stringify(lastAuctionStateRef.current)) {
         setAuctionState(newState as any);
         lastAuctionStateRef.current = newState as any;
         addLog(`✅ State updated. Turn: ${newState.current_turn_player}, Index: ${newState.auction_index}`);
       }
     } else if (payload && payload.status) {
-      // تحديث مباشر للحالة
       if (JSON.stringify(payload) !== JSON.stringify(lastAuctionStateRef.current)) {
         setAuctionState(payload);
         lastAuctionStateRef.current = payload;
@@ -140,12 +138,12 @@ export default function GamePage() {
         break;
         
       case 'turn_skipped':
-        addLog(`⏭️ ${message.player_id} skipped turn. Reason: ${message.reason || 'Strategic'}`);
+        addLog(`⏭️ ${message.player_id} skipped turn.`);
         setIsLoading(false);
         break;
         
       case 'timer_expired':
-        addLog(`⏰ Timer expired for ${message.player_id}. Auto-advancing phase.`);
+        addLog(`⏰ Timer expired for ${message.player_id}.`);
         break;
         
       case 'auction_completed':
@@ -187,11 +185,7 @@ export default function GamePage() {
     },
   });
 
-  /**
-   * =========================================================================
-   * EFFECT: Keep-Alive Ping (كل 20 ثانية)
-   * =========================================================================
-   */
+  // Keep-Alive Ping كل 20 ثانية
   useEffect(() => {
     if (!isConnected) return;
     const keepAlive = setInterval(() => {
@@ -200,11 +194,7 @@ export default function GamePage() {
     return () => clearInterval(keepAlive);
   }, [isConnected, send]);
 
-  /**
-   * =========================================================================
-   * EFFECT: Initialize Session (إرسال add_bot أو start_auction)
-   * =========================================================================
-   */
+  // تهيئة جلسة اللعب عند الاتصال
   useEffect(() => {
     if (!isInitialized && isConnected) {
       setIsInitialized(true);
@@ -230,15 +220,10 @@ export default function GamePage() {
     }
   }, [isConnected, isInitialized, player2Id, send, setIsLoading, sessionId, player1Id, addLog]);
 
-  /**
-   * =========================================================================
-   * EFFECT: Fallback State Loader & Local Timer with Auto-Skip
-   * =========================================================================
-   */
+  // مؤقت محلي وتجاوز تلقائي عند انتهاء الوقت
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // تفعيل الوضع الاحتياطي بعد 2.5 ثانية إذا لم تصل بيانات
     const fallbackTimer = setTimeout(() => {
       if (!auctionState) {
         const defaultState = buildDefaultAuctionState(sessionId, player1Id);
@@ -251,15 +236,25 @@ export default function GamePage() {
     return () => clearTimeout(fallbackTimer);
   }, [auctionState, player1Id, sessionId, setAuctionState, addLog]);
 
+  const handleSkipBid = useCallback(() => {
+    if (isLoading) return;
+    setIsLoading(true);
+    addLog('⏭️ Skipping turn...');
+    send({
+      type: 'skip_bid',
+      action: 'skip_bid',
+      session_id: sessionId,
+      player_id: player1Id,
+    });
+  }, [send, sessionId, player1Id, isLoading, addLog, setIsLoading]);
+
   useEffect(() => {
-    // مسح المؤقت القديم عند تغير الحالة
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
     }
 
     if (!auctionState || auctionState.status === 'completed') return;
 
-    // بدء مؤقت جديد
     timerIntervalRef.current = setInterval(() => {
       setAuctionState((prevState: any) => {
         if (!prevState) return prevState;
@@ -270,7 +265,6 @@ export default function GamePage() {
         if (currentTime > 1) {
           return { ...prevState, timer_remaining: currentTime - 1 };
         } else if (currentTime === 1 && isMyTurn) {
-          // الوقت انتهى وحان دوري -> أرسل تخطي تلقائي
           addLog('⏰ Timer reached zero. Auto-skipping turn.');
           handleSkipBid();
           return { ...prevState, timer_remaining: 0 };
@@ -282,13 +276,8 @@ export default function GamePage() {
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     };
-  }, [auctionState?.status, auctionState?.current_turn_player, player1Id, addLog]);
+  }, [auctionState?.status, auctionState?.current_turn_player, player1Id, addLog, handleSkipBid, setAuctionState]);
 
-  /**
-   * =========================================================================
-   * EVENT HANDLERS: Bid, Skip, Match
-   * =========================================================================
-   */
   const handlePlaceBid = useCallback((amount: number) => {
     if (isLoading) return;
     setIsLoading(true);
@@ -299,18 +288,6 @@ export default function GamePage() {
       session_id: sessionId,
       player_id: player1Id,
       amount,
-    });
-  }, [send, sessionId, player1Id, isLoading, addLog, setIsLoading]);
-
-  const handleSkipBid = useCallback(() => {
-    if (isLoading) return;
-    setIsLoading(true);
-    addLog('⏭️ Skipping turn...');
-    send({
-      type: 'skip_bid',
-      action: 'skip_bid',
-      session_id: sessionId,
-      player_id: player1Id,
     });
   }, [send, sessionId, player1Id, isLoading, addLog, setIsLoading]);
 
@@ -325,7 +302,6 @@ export default function GamePage() {
     });
   }, [send, sessionId, player1Id, addLog, setIsLoading]);
 
-  // --- Render Logic ---
   if (!forceReady && (!isConnected && !auctionState)) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
@@ -354,7 +330,6 @@ export default function GamePage() {
   const isAuctionComplete = safeState.status === 'completed';
   const isPlayersTurn = safeState.current_turn_player === player1Id;
   
-  // استخراج بيانات الخصم من الحالة
   const opponentInfo = (safeState as any).opponent_info || {
     id: player2Id,
     name: player2Id === 'Goat_Bot' ? 'Goat AI 🐐' : player2Id,
@@ -375,7 +350,6 @@ export default function GamePage() {
 
   return (
     <main className="min-h-screen bg-dark-bg text-text-primary selection:bg-accent-terracotta selection:text-white">
-      {/* ===== Enterprise Header Bar ===== */}
       <header className="bg-dark-bg-alt border-b border-dark-card sticky top-0 z-40 backdrop-blur-md bg-opacity-90">
         <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -401,7 +375,6 @@ export default function GamePage() {
         </div>
       </header>
 
-      {/* ===== Main Container Layout ===== */}
       <div className="max-w-7xl mx-auto px-4 py-6 sm:py-8 space-y-6">
         {storeError && (
           <Card className="p-3 sm:p-4 bg-status-error/10 border border-status-error flex items-start gap-3 rounded-2xl shadow-lg">
@@ -413,10 +386,7 @@ export default function GamePage() {
           </Card>
         )}
 
-        {/* ===== Grid Dashboard ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* ===== Left Column: Auction Timer & Team Squad Status ===== */}
           <div className="lg:col-span-2 space-y-6">
             <AuctionTimer
               timeRemaining={Math.max(0, safeState.timer_remaining ?? 30)}
@@ -429,7 +399,6 @@ export default function GamePage() {
               disabled={!isPlayersTurn || isLoading || isAuctionComplete}
             />
 
-            {/* ===== Comprehensive Squad Status Panel ===== */}
             <Card className="p-5 sm:p-6 bg-gradient-to-br from-dark-bg-alt to-dark-bg border border-dark-card rounded-3xl shadow-xl space-y-4">
               <div className="flex items-center justify-between border-b border-dark-card pb-3">
                 <h3 className="font-black text-text-primary text-base sm:text-lg flex items-center gap-2">
@@ -441,7 +410,6 @@ export default function GamePage() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Player 1 Card */}
                 <div className="p-4 rounded-2xl bg-dark-bg border-2 border-accent-terracotta/30 shadow-md relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-25 transition">
                     <ShieldCheck size={48} className="text-accent-terracotta" />
@@ -453,16 +421,8 @@ export default function GamePage() {
                   <div className="w-full bg-dark-card h-2 rounded-full mt-3 overflow-hidden">
                     <div className="bg-accent-terracotta h-full transition-all duration-500" style={{ width: `${(p1TeamCount / 9) * 100}%` }}></div>
                   </div>
-                  {/* عرض آخر 3 بطاقات مكتسبة */}
-                  {Array.isArray(p1Team) && p1Team.slice(-3).map((card: any, i: number) => (
-                    <div key={i} className="mt-2 text-xs text-text-secondary flex justify-between">
-                      <span>{card.name || card.position}</span>
-                      <span className="text-accent-terracotta">{card.rating || ''} ⭐</span>
-                    </div>
-                  ))}
                 </div>
 
-                {/* Opponent (Goat Bot) Card */}
                 <div className="p-4 rounded-2xl bg-dark-bg border-2 border-accent-gold/30 shadow-md relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-25 transition">
                     <Cpu size={48} className="text-accent-gold" />
@@ -477,7 +437,6 @@ export default function GamePage() {
                     <div className="bg-accent-gold h-full transition-all duration-500" style={{ width: `${(p2TeamCount / 9) * 100}%` }}></div>
                   </div>
                   
-                  {/* تفاصيل ميزانية الخصم وعقليته */}
                   <div className="mt-3 space-y-1.5 text-xs">
                     <div className="flex justify-between text-text-secondary">
                       <span className="flex items-center gap-1"><Coins size={12} /> Budget</span>
@@ -487,26 +446,11 @@ export default function GamePage() {
                       <span className="flex items-center gap-1"><Zap size={12} /> Mindset</span>
                       <span className="font-mono text-emerald-400">{opponentInfo.current_mindset || 'MASTERMIND'}</span>
                     </div>
-                    <div className="flex justify-between text-text-secondary">
-                      <span className="flex items-center gap-1"><Activity size={12} /> Status</span>
-                      <span className={`font-bold ${isPlayersTurn ? 'text-emerald-400' : 'text-amber-400'}`}>
-                        {isPlayersTurn ? 'Your Turn' : 'Thinking...'}
-                      </span>
-                    </div>
                   </div>
-                  
-                  {/* عرض آخر 3 بطاقات للخصم */}
-                  {Array.isArray(p2Team) && p2Team.slice(-3).map((card: any, i: number) => (
-                    <div key={i} className="mt-2 text-xs text-text-secondary flex justify-between">
-                      <span>{card.name || card.position}</span>
-                      <span className="text-accent-gold">{card.rating || ''} ⭐</span>
-                    </div>
-                  ))}
                 </div>
               </div>
             </Card>
 
-            {/* ===== Advanced Diagnostics & Telemetry Console ===== */}
             <Card className="p-5 bg-dark-bg-alt border border-dark-card rounded-3xl shadow-lg space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-black uppercase text-text-secondary tracking-widest flex items-center gap-1.5">
@@ -533,7 +477,6 @@ export default function GamePage() {
             </Card>
           </div>
 
-          {/* ===== Right Column: Auction Progress, Commentary & Match Simulation ===== */}
           <div className="space-y-6">
             <AuctionProgress state={safeState} />
             <CommentaryView commentary={commentary} isLive={!isAuctionComplete} maxHeight="max-h-72 sm:max-h-[420px]" />
@@ -562,7 +505,6 @@ export default function GamePage() {
         </div>
       </div>
 
-      {/* ===== Enterprise Footer ===== */}
       <footer className="bg-dark-bg-alt border-t border-dark-card mt-12 py-8">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center text-center sm:text-left gap-4">
           <div>
