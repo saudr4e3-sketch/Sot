@@ -13,9 +13,14 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { useGameStore } from '@/store/gameStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import AuctionTimer from '@/components/game/AuctionTimer'
+import AuctionProgress from '@/components/game/AuctionProgress'
+import CommentaryView from '@/components/game/CommentaryView'
+import MatchSimulation from '@/components/game/MatchSimulation'
+import MysteryBoxCard from '@/components/game/MysteryBoxCard'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
-import { Loader, Play, Trophy, ShieldCheck, Zap, Activity, Cpu, Coins, Wifi, WifiOff, Gift, Users, Bot } from 'lucide-react'
+import { AlertCircle, Loader, Play, Trophy, ShieldCheck, Zap, Activity, Cpu, Coins, Wifi, WifiOff, Gift, Users, Bot } from 'lucide-react'
 
 // ============================================================================
 // LOCAL TYPE DEFINITIONS
@@ -103,12 +108,14 @@ const FALLBACK_LOAD_DELAY_MS = 2500
 const TIMER_TICK_MS = 250
 const MAX_STUCK_AT_ZERO_MS = 4000
 
+// Mystery Box Probability Configuration
 const MYSTERY_BOX_PROBABILITIES = {
   Weak: 0.40,
   Medium: 0.30,
   Legendary: 0.30
 }
 
+// Match Engine Weights
 const MATCH_WEIGHTS = {
   RATING_WEIGHT: 0.40,
   TACTIC_WEIGHT: 0.30,
@@ -149,6 +156,9 @@ const buildDefaultAuctionState = (sessionId: string, player1Id: string, isBotMat
   } as AuctionState
 }
 
+// ============================================================================
+// MYSTERY BOX GENERATOR
+// ============================================================================
 const generateMysteryBox = (position: string): MysteryBoxCard => {
   const rand = Math.random()
   let rarity: 'Weak' | 'Medium' | 'Legendary'
@@ -162,9 +172,9 @@ const generateMysteryBox = (position: string): MysteryBoxCard => {
   }
 
   const ratings = {
-    Weak: Math.floor(Math.random() * 10) + 70,
-    Medium: Math.floor(Math.random() * 10) + 80,
-    Legendary: Math.floor(Math.random() * 6) + 90
+    Weak: Math.floor(Math.random() * 10) + 70, // 70-79
+    Medium: Math.floor(Math.random() * 10) + 80, // 80-89
+    Legendary: Math.floor(Math.random() * 6) + 90 // 90-95
   }
 
   const mysteryPlayers = {
@@ -187,6 +197,9 @@ const generateMysteryBox = (position: string): MysteryBoxCard => {
   }
 }
 
+// ============================================================================
+// MATCH ENGINE CALCULATOR
+// ============================================================================
 const calculateMatchResult = (
   team1: any[],
   team2: any[],
@@ -381,12 +394,24 @@ export default function GamePage() {
       clearInterval(timerIntervalRef.current)
       timerIntervalRef.current = null
     }
+    if (stuckAtZeroTimerRef.current) {
+      clearTimeout(stuckAtZeroTimerRef.current)
+      stuckAtZeroTimerRef.current = null
+    }
+    if (forceAdvanceTimerRef.current) {
+      clearTimeout(forceAdvanceTimerRef.current)
+      forceAdvanceTimerRef.current = null
+    }
   }, [player1Id, addLog, setAuctionState, checkMysteryBoxAward])
 
   const handleGameMessage = useCallback((rawMessage: any) => {
     if (!rawMessage || !isMountedRef.current) return
 
     const message = rawMessage as Record<string, any>
+    const messageType = message.type || 'unknown'
+
+    addLog(`📩 Server: ${messageType}`)
+
     const payload = message.data || message.state || message
 
     if (payload && payload.auction_state) {
@@ -406,10 +431,79 @@ export default function GamePage() {
         currentAuctionStateRef.current = newState
         autoSkipSentRef.current = false
         setBidInProgress(false)
+        addLog(`✅ State synced. Turn: ${newState.current_turn_player}, Card: ${(newState.auction_index ?? 0) + 1}/${TOTAL_AUCTION_POSITIONS}`)
+      }
+    } else if (payload && payload.status) {
+      if (JSON.stringify(payload) !== JSON.stringify(lastAuctionStateRef.current)) {
+        checkMysteryBoxAward(payload as AuctionState)
+        setAuctionState(payload as AuctionState)
+        lastAuctionStateRef.current = payload as AuctionState
+        currentAuctionStateRef.current = payload as AuctionState
+        autoSkipSentRef.current = false
+        setBidInProgress(false)
       }
     }
-    setIsLoading(false)
-  }, [setAuctionState, setIsLoading, addLog, sessionId, player1Id, isBotMatch, checkMysteryBoxAward])
+
+    switch (messageType) {
+      case 'auction_started':
+      case 'bot_joined':
+        setIsLoading(false)
+        setForceReady(true)
+        break
+      case 'auction_state':
+      case 'state_update':
+        setIsLoading(false)
+        setBidInProgress(false)
+        break
+      case 'bid_confirmed':
+        addLog(`✅ Bid confirmed for ${message.amount}M`)
+        setBidInProgress(false)
+        setIsLoading(false)
+        break
+      case 'bid_placed':
+        addLog(`💰 ${message.player_id} bids ${message.amount}M`)
+        setIsLoading(false)
+        break
+      case 'bid_rejected':
+        addLog(`❌ Bid rejected: ${message.reason || 'Unknown'}`)
+        setBidInProgress(false)
+        setIsLoading(false)
+        break
+      case 'turn_skipped':
+        addLog(`⏭️ ${message.player_id} skipped`)
+        setIsLoading(false)
+        break
+      case 'timer_expired':
+        addLog(`⏰ Timeout for ${message.player_id}`)
+        break
+      case 'auction_completed':
+        addLog('🏁 Auction finished')
+        setIsLoading(false)
+        break
+      case 'match_result':
+      case 'match_completed':
+        if (message.data) {
+          const matchResult = message.data as MatchResult
+          setMatchSimulation(matchResult)
+          setCommentary(matchResult.commentary || [])
+          addLog(`⚽ Match completed! Winner: ${matchResult.winner}`)
+        }
+        setIsLoading(false)
+        setIsSimulating(false)
+        break
+      case 'error':
+        setError(message.message || 'Unknown error')
+        addLog(`❌ ${message.message}`)
+        setIsLoading(false)
+        setBidInProgress(false)
+        break
+      case 'pong':
+        setNetworkPing(Date.now() - (message.timestamp ? new Date(message.timestamp as string).getTime() : Date.now()))
+        break
+      default:
+        break
+    }
+  }, [setAuctionState, setIsLoading, setError, addLog, sessionId, player1Id, isBotMatch, checkMysteryBoxAward])
 
   const { isConnected, send } = useWebSocket({
     sessionId,
@@ -419,190 +513,547 @@ export default function GamePage() {
       if (!isMountedRef.current) return
       setIsLoading(false)
       setConnectionStatus('connected')
+      addLog('🔗 Connected to server')
     },
     onDisconnect: () => {
       if (!isMountedRef.current) return
       setConnectionStatus('disconnected')
+      addLog('🔌 Disconnected')
     },
   })
 
-  const handlePlaceBid = useCallback((amount: number) => {
+  useEffect(() => {
+    setConnectionStatus(isConnected ? 'connected' : 'disconnected')
+  }, [isConnected])
+
+  useEffect(() => {
+    currentAuctionStateRef.current = auctionState as any
+  }, [auctionState])
+
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
+      if (stuckAtZeroTimerRef.current) clearTimeout(stuckAtZeroTimerRef.current)
+      if (forceAdvanceTimerRef.current) clearTimeout(forceAdvanceTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!isConnected) return
-    if (bidInProgress) return
+    const keepAlive = setInterval(() => {
+      if (isMountedRef.current) send({ type: 'ping', timestamp: new Date().toISOString() } as any)
+    }, PING_INTERVAL_MS)
+    return () => clearInterval(keepAlive)
+  }, [isConnected, send])
+
+  useEffect(() => {
+    if (!isInitializedRef.current && isConnected && isMountedRef.current) {
+      isInitializedRef.current = true
+      setIsInitialized(true)
+      setIsLoading(true)
+      addLog('🚀 Starting session...')
+
+      if (isBotMatch) {
+        send({ 
+          type: 'init_bot_match', 
+          action: 'init_bot_match', 
+          session_id: sessionId, 
+          player_id: player1Id,
+          auction_sequence: AUCTION_SEQUENCE
+        } as any)
+      } else {
+        send({ 
+          type: 'join_room', 
+          action: 'join_room', 
+          room_pin: player2Id,
+          session_id: sessionId,
+          player_id: player1Id
+        } as any)
+      }
+    }
+  }, [isConnected, isInitialized, isBotMatch, player2Id, send, setIsLoading, sessionId, player1Id, addLog])
+
+  useEffect(() => {
+    const fallbackTimer = setTimeout(() => {
+      if (!auctionState && isMountedRef.current) {
+        const defaultState = buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
+        setAuctionState(defaultState)
+        lastAuctionStateRef.current = defaultState
+        currentAuctionStateRef.current = defaultState
+        setForceReady(true)
+        addLog('⚡ Offline mode activated')
+      }
+    }, FALLBACK_LOAD_DELAY_MS)
+    return () => clearTimeout(fallbackTimer)
+  }, [auctionState, player1Id, sessionId, setAuctionState, addLog, isBotMatch])
+
+  const handlePlaceBid = useCallback((amount: number) => {
+    if (!isConnected) {
+      addLog('⚠️ Cannot bid while offline')
+      return
+    }
+    if (bidInProgress) {
+      addLog('⚠️ Bid already in progress')
+      return
+    }
+    
     setBidInProgress(true)
     setIsLoading(true)
-    send({ type: 'place_bid', action: 'place_bid', session_id: sessionId, player_id: player1Id, amount, timestamp: Date.now() } as any)
-    setTimeout(() => { if (bidInProgress && isMountedRef.current) { setBidInProgress(false); setIsLoading(false) } }, 5000)
-  }, [send, sessionId, player1Id, isConnected, setIsLoading, bidInProgress])
+    addLog(`💰 Bidding ${amount}M`)
+    
+    send({ 
+      type: 'place_bid', 
+      action: 'place_bid', 
+      session_id: sessionId, 
+      player_id: player1Id, 
+      amount,
+      timestamp: Date.now()
+    } as any)
+    
+    setTimeout(() => {
+      if (bidInProgress && isMountedRef.current) {
+        setBidInProgress(false)
+        setIsLoading(false)
+        addLog('⚠️ Bid timeout - resetting state')
+      }
+    }, 5000)
+  }, [send, sessionId, player1Id, isConnected, addLog, setIsLoading, bidInProgress])
 
   const handleSkipBid = useCallback(() => {
     autoSkipSentRef.current = true
     if (!isConnected) {
+      addLog('⚠️ Offline skip - advancing locally')
       advanceLocally()
       return
     }
     setIsLoading(true)
-    send({ type: 'skip_bid', action: 'skip_bid', session_id: sessionId, player_id: player1Id, timestamp: Date.now() } as any)
-  }, [send, sessionId, player1Id, isConnected, setIsLoading, advanceLocally])
+    addLog('⏭️ Skipping turn')
+    send({ 
+      type: 'skip_bid', 
+      action: 'skip_bid', 
+      session_id: sessionId, 
+      player_id: player1Id,
+      timestamp: Date.now()
+    } as any)
+  }, [send, sessionId, player1Id, isConnected, addLog, setIsLoading, advanceLocally])
 
   const handleStartMatch = useCallback(() => {
+    if (!isConnected && !isBotMatch) return
+    
     setIsLoading(true)
     setIsSimulating(true)
-    const currentState = currentAuctionStateRef.current || safeState
-    const p1Team = currentState.team1 || currentState.player1_team || []
-    const p2Team = currentState.team2 || currentState.player2_team || []
+    addLog('⚽ Starting match simulation')
     
-    const result = calculateMatchResult(
-      Array.isArray(p1Team) ? p1Team : Object.values(p1Team).flat(),
-      Array.isArray(p2Team) ? p2Team : Object.values(p2Team).flat(),
-      { formation_synergy: 0.7, playstyle_effectiveness: 0.8 },
-      { formation_synergy: 0.75, playstyle_effectiveness: 0.85 }
-    )
-    
-    setMatchSimulation(result)
-    setCommentary(result.commentary)
-    setIsSimulating(false)
-    setIsLoading(false)
-    
-    setAuctionState({
-      ...currentState,
-      match_result: result,
-      status: 'match_completed'
-    })
-  }, [setAuctionState, setIsLoading])
+    if (isBotMatch || !isConnected) {
+      const currentState = currentAuctionStateRef.current
+      if (currentState) {
+        const p1Team = (currentState.team1 || currentState.player1_team || []) as any[]
+        const p2Team = (currentState.team2 || currentState.player2_team || []) as any[]
+        
+        const result = calculateMatchResult(
+          Array.isArray(p1Team) ? p1Team : Object.values(p1Team).flat(),
+          Array.isArray(p2Team) ? p2Team : Object.values(p2Team).flat(),
+          { formation_synergy: 0.7, playstyle_effectiveness: 0.8 },
+          { formation_synergy: 0.75, playstyle_effectiveness: 0.85 }
+        )
+        
+        setMatchSimulation(result)
+        setCommentary(result.commentary)
+        setIsSimulating(false)
+        setIsLoading(false)
+        
+        const updatedState = {
+          ...currentState,
+          match_result: result,
+          status: 'match_completed'
+        }
+        setAuctionState(updatedState)
+        
+        addLog(`⚽ Match completed! ${result.score.player1}-${result.score.player2}`)
+      }
+    } else {
+      send({ 
+        type: 'start_match', 
+        action: 'start_match', 
+        session_id: sessionId, 
+        player_id: player1Id,
+        match_weights: MATCH_WEIGHTS
+      } as any)
+    }
+  }, [send, sessionId, player1Id, isConnected, addLog, setIsLoading, isBotMatch, setAuctionState])
 
   const handleCloseMysteryBox = useCallback(() => {
     setShowMysteryBox(false)
     setCurrentMysteryBox(null)
   }, [])
 
+  useEffect(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current)
+      timerIntervalRef.current = null
+    }
+    if (stuckAtZeroTimerRef.current) {
+      clearTimeout(stuckAtZeroTimerRef.current)
+      stuckAtZeroTimerRef.current = null
+    }
+    if (forceAdvanceTimerRef.current) {
+      clearTimeout(forceAdvanceTimerRef.current)
+      forceAdvanceTimerRef.current = null
+    }
+
+    if (!auctionState || auctionState.status === 'completed' || auctionState.status === 'match_completed') return
+
+    const currentTurn = auctionState.current_turn_player || ''
+    lastTurnPlayerRef.current = currentTurn
+
+    timerIntervalRef.current = setInterval(() => {
+      if (!isMountedRef.current) {
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
+        return
+      }
+
+      const currentState = currentAuctionStateRef.current
+      if (!currentState) return
+
+      const currentTime: number = currentState.timer_remaining ?? DEFAULT_TIMER
+      const isMyTurn: boolean = currentState.current_turn_player === player1Id
+
+      if (currentTime > 1) {
+        const updatedState: AuctionState = {
+          ...currentState,
+          timer_remaining: currentTime - 1,
+          opponent_info: currentState.opponent_info || (currentState as any).opponent_info,
+          player1_team: currentState.player1_team || (currentState as any).team1 || {},
+          player2_team: currentState.player2_team || (currentState as any).team2 || {},
+        } as AuctionState
+
+        setAuctionState(updatedState)
+        currentAuctionStateRef.current = updatedState
+        lastAuctionStateRef.current = updatedState
+      } else if (currentTime <= 1) {
+        if (timerIntervalRef.current) {
+          clearInterval(timerIntervalRef.current)
+          timerIntervalRef.current = null
+        }
+
+        const zeroState: AuctionState = {
+          ...currentState,
+          timer_remaining: 0,
+          opponent_info: currentState.opponent_info || (currentState as any).opponent_info,
+          player1_team: currentState.player1_team || (currentState as any).team1 || {},
+          player2_team: currentState.player2_team || (currentState as any).team2 || {},
+        } as AuctionState
+
+        setAuctionState(zeroState)
+        currentAuctionStateRef.current = zeroState
+        lastAuctionStateRef.current = zeroState
+
+        if (isMyTurn && !autoSkipSentRef.current) {
+          addLog('⏰ Timer reached zero - Your turn. Auto-skipping.')
+          handleSkipBid()
+        } else if (!isMyTurn && !autoSkipSentRef.current) {
+          addLog('⏰ Timer reached zero - Opponent turn. Waiting for server or advancing.')
+          if (!isConnected) {
+            addLog('📡 Offline detected during opponent timeout. Advancing locally.')
+            advanceLocally()
+          } else {
+            forceAdvanceTimerRef.current = setTimeout(() => {
+              if (currentAuctionStateRef.current?.timer_remaining === 0 && !autoSkipSentRef.current) {
+                addLog('🔄 Server did not respond. Advancing locally.')
+                advanceLocally()
+              }
+            }, MAX_STUCK_AT_ZERO_MS)
+          }
+        } else {
+          addLog('🛑 Timer at zero, but skip already sent. Waiting for server.')
+        }
+      }
+    }, TIMER_TICK_MS)
+
+    return () => {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current)
+        timerIntervalRef.current = null
+      }
+      if (stuckAtZeroTimerRef.current) {
+        clearTimeout(stuckAtZeroTimerRef.current)
+        stuckAtZeroTimerRef.current = null
+      }
+      if (forceAdvanceTimerRef.current) {
+        clearTimeout(forceAdvanceTimerRef.current)
+        forceAdvanceTimerRef.current = null
+      }
+    }
+  }, [auctionState?.status, auctionState?.current_turn_player, player1Id, isConnected, addLog, setAuctionState, handleSkipBid, advanceLocally])
+
+  if (!forceReady && (!isConnected && !auctionState)) {
+    return (
+      <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
+        <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4 shadow-2xl border-dark-card">
+          <Loader className="animate-spin mx-auto text-accent-terracotta" size={40} />
+          <p className="text-text-primary font-semibold">Connecting to Game Server</p>
+          <p className="text-xs text-text-secondary">Secure WebSocket handshake in progress...</p>
+          
+          <div className="flex items-center justify-center gap-2 mt-2">
+            {isBotMatch ? (
+              <span className="bg-blue-500/20 text-blue-400 text-xs px-3 py-1 rounded-full flex items-center gap-1">
+                <Bot size={12} /> Vs GOAT-X
+              </span>
+            ) : (
+              <span className="bg-purple-500/20 text-purple-400 text-xs px-3 py-1 rounded-full flex items-center gap-1">
+                <Users size={12} /> Room: {player2Id}
+              </span>
+            )}
+          </div>
+          
+          <button
+            onClick={() => {
+              const defaultState = buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
+              setAuctionState(defaultState)
+              lastAuctionStateRef.current = defaultState
+              currentAuctionStateRef.current = defaultState
+              setForceReady(true)
+            }}
+            className="w-full py-2.5 bg-accent-terracotta text-white rounded-lg font-bold text-sm hover:opacity-90 transition"
+          >
+            Enter Offline Mode ⚽
+          </button>
+        </Card>
+      </div>
+    )
+  }
+
   const safeState = auctionState || buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
   const isAuctionComplete = safeState.status === 'completed' || safeState.status === 'match_completed'
-  const opponentInfo = safeState.opponent_info || { id: player2Id, name: player2Id === 'Goat_Bot' ? 'GOAT-X 🐐' : player2Id, budget: 100, team: [] }
-  const p1Team = safeState.team1 || safeState.player1_team || []
-  const p2Team = safeState.team2 || safeState.player2_team || opponentInfo.team || []
-  const p1TeamCount = Array.isArray(p1Team) ? p1Team.length : Object.values(p1Team).flat().length
-  const p2TeamCount = Array.isArray(p2Team) ? p2Team.length : Object.values(p2Team).flat().length
+  const isPlayersTurn = safeState.current_turn_player === player1Id
+  const isMatchFinished = safeState.status === 'match_completed'
+
+  const opponentInfo = (safeState as any).opponent_info || {
+    id: player2Id,
+    name: player2Id === 'Goat_Bot' ? 'GOAT-X 🐐' : player2Id,
+    budget: 100,
+    cards_acquired: 0,
+    total_budget: 100,
+    current_mindset: 'MASTERMIND',
+    team: (safeState as any).team2 || [],
+    is_bot: player2Id === 'Goat_Bot'
+  }
+
+  const p1Team = (safeState as any).team1 || safeState.player1_team || []
+  const p2Team = opponentInfo.team || (safeState as any).team2 || safeState.player2_team || []
+
+  const p1TeamCount = Array.isArray(p1Team) ? p1Team.length : (typeof p1Team === 'object' ? Object.values(p1Team).flat().length : 0)
+  const p2TeamCount = Array.isArray(p2Team) ? p2Team.length : (typeof p2Team === 'object' ? Object.values(p2Team).flat().length : 0)
   const p2Budget = (opponentInfo as any).budget || (opponentInfo as any).total_budget || 100
+
   const displayMatchResult = matchSimulation || safeState.match_result
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-4 sm:p-6 flex flex-col items-center justify-center">
-      <div className="max-w-5xl w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-6">
+    <main className="min-h-screen bg-slate-950 text-white p-4 sm:p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         
-        {/* HEADER BAR */}
-        <div className="flex flex-col sm:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
+        {/* HEADER */}
+        <header className="bg-slate-900 border border-slate-800 rounded-3xl p-5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-2xl">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-emerald-500/10 rounded-xl text-emerald-400 border border-emerald-500/20">
-              <Trophy size={24} />
+            <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-2xl border border-emerald-500/20">
+              <Trophy size={28} />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight">OSM FUT Dual Battle</h1>
-              <p className="text-xs text-slate-400">Manager: <span className="text-white font-semibold">{player1Id}</span></p>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold tracking-tight">OSM FUT Dual Battle</h1>
+                <span className="text-[10px] font-mono px-2 py-0.5 bg-slate-800 text-slate-300 rounded-full">v7.0.0</span>
+              </div>
+              <p className="text-xs text-slate-400">Self-Healing Auction Engine</p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-3">
-            <span className="text-xs px-3 py-1.5 bg-emerald-500/20 text-emerald-400 rounded-xl font-mono border border-emerald-500/30 flex items-center gap-1.5">
+            <span className="text-xs px-3.5 py-1.5 bg-emerald-500/20 text-emerald-400 rounded-xl font-mono border border-emerald-500/30 flex items-center gap-1.5">
               {isBotMatch ? <Bot size={14} /> : <Users size={14} />}
               {isBotMatch ? 'Vs GOAT-X (Bot)' : `Room: ${player2Id}`}
             </span>
-            <span className={`text-xs px-3 py-1.5 rounded-xl font-mono flex items-center gap-1.5 border ${isConnected ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
+            <span className={`text-xs px-3.5 py-1.5 rounded-xl font-mono flex items-center gap-1.5 border ${isConnected ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
               {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
               {isConnected ? 'Connected' : 'Offline'}
             </span>
           </div>
-        </div>
+        </header>
 
-        {/* AUCTION & BATTLE ARENA */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* MAIN GAME LAYOUT */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           
-          {/* PLAYER 1 STATS */}
-          <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 space-y-3">
-            <h3 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
-              <ShieldCheck size={16} /> {player1Id}
-            </h3>
-            <div className="flex justify-between text-xs text-slate-300">
-              <span>Budget: <strong className="text-emerald-400">{safeState.player1_budget ?? 100}M</strong></span>
-              <span>Cards: <strong className="text-white">{p1TeamCount}/9</strong></span>
+          {/* LEFT: AUCTION & CONTROLS */}
+          <div className="lg:col-span-8 space-y-6">
+            
+            {/* LIVE AUCTION CARD */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden space-y-6">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none"></div>
+
+              <div className="flex justify-between items-center border-b border-slate-800/80 pb-4">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Live Auction Phase</span>
+                </div>
+                <div className="flex items-center gap-2 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800 font-mono text-sm text-amber-400">
+                  <span>⏱️ Time Left:</span>
+                  <span className="font-bold">{safeState.timer_remaining ?? 30}s</span>
+                </div>
+              </div>
+
+              {/* CARD DETAILS */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+                <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800/80 text-center space-y-3">
+                  <span className="text-xs font-mono uppercase bg-slate-900 px-3 py-1 rounded-full text-slate-300 border border-slate-800">
+                    Position: {safeState.current_position || 'GK'} ({ (safeState.auction_index ?? 0) + 1 } / 9)
+                  </span>
+
+                  {safeState.current_player ? (
+                    <div className="space-y-1">
+                      <h3 className="text-2xl font-black text-white">{safeState.current_player.name}</h3>
+                      <p className="text-sm font-bold text-emerald-400">Rating: {safeState.current_player.rating} | Rarity: {safeState.current_player.rarity || 'Elite'}</p>
+                    </div>
+                  ) : (
+                    <div className="py-8 space-y-2">
+                      <Loader className="animate-spin mx-auto text-emerald-400" size={32} />
+                      <p className="text-sm text-slate-400">Waiting for next player card...</p>
+                    </div>
+                  )}
+
+                  <div className="text-3xl font-black text-amber-400 font-mono pt-2">
+                    Current Bid: {safeState.highest_bid || 0}M
+                  </div>
+                </div>
+
+                {/* BID ACTIONS */}
+                <div className="space-y-4">
+                  <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs text-slate-300">
+                    <div className="flex justify-between">
+                      <span>Turn Player:</span>
+                      <strong className="text-white">{safeState.current_turn_player === player1Id ? 'Your Turn 🟢' : "Opponent's Turn ⏳"}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Highest Bidder:</span>
+                      <strong className="text-emerald-400">{safeState.highest_bidder || 'No Bids Yet'}</strong>
+                    </div>
+                  </div>
+
+                  {!isAuctionComplete ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button 
+                        onClick={() => handlePlaceBid((safeState.highest_bid || 0) + 5)}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl text-sm transition shadow-lg shadow-emerald-900/20"
+                      >
+                        Place Bid (+5M) 💰
+                      </Button>
+                      <Button 
+                        onClick={handleSkipBid}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-3.5 rounded-xl text-sm transition"
+                      >
+                        Skip Turn ⏭️
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button 
+                      onClick={handleStartMatch}
+                      className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-4 rounded-xl text-base transition shadow-xl shadow-blue-900/40 flex items-center justify-center gap-2"
+                    >
+                      <Play size={18} /> Start Match Simulation ⚽
+                    </Button>
+                  )}
+                </div>
+              </div>
+
             </div>
+
+            {/* TELEMETRY CONSOLE */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300">
+                  <Activity size={16} className="text-emerald-400" /> Telemetry & Activity Console
+                </h3>
+                <span className="text-xs text-slate-500 font-mono">Real-time WebSocket Logs</span>
+              </div>
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/80 font-mono text-xs text-slate-400 h-40 overflow-y-auto space-y-1">
+                {clientLogs.length === 0 ? (
+                  <p className="text-slate-600">Connecting and waiting for server events...</p>
+                ) : (
+                  clientLogs.map((log, idx) => (
+                    <div key={idx} className="leading-relaxed">{log}</div>
+                  ))
+                )}
+              </div>
+            </div>
+
           </div>
 
-          {/* CENTRAL AUCTION / MATCH HUB */}
-          <div className="bg-slate-950/80 p-6 rounded-2xl border border-slate-800 text-center space-y-4 flex flex-col justify-center items-center">
-            <span className="text-xs font-mono text-slate-400 bg-slate-900 px-3 py-1 rounded-full border border-slate-800">
-              Position: {safeState.current_position || 'GK'} ({ (safeState.auction_index ?? 0) + 1 } / 9)
-            </span>
-
-            {safeState.current_player ? (
-              <div className="space-y-1">
-                <h4 className="text-lg font-bold text-white">{safeState.current_player.name}</h4>
-                <p className="text-xs text-emerald-400 font-bold">Rating: {safeState.current_player.rating}</p>
+          {/* RIGHT: SQUAD ACQUISITION MATRIX */}
+          <div className="lg:col-span-4 space-y-6">
+            
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-6">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+                <h3 className="text-base font-bold flex items-center gap-2">
+                  <ShieldCheck className="text-emerald-400" size={20} /> Squad Matrix
+                </h3>
+                <span className="text-xs font-mono bg-slate-800 px-3 py-1 rounded-full text-slate-300">Target: 9 Cards</span>
               </div>
-            ) : (
-              <p className="text-sm text-slate-400">Waiting for next player card...</p>
-            )}
 
-            <div className="text-2xl font-black text-amber-400 font-mono">
-              Bid: {safeState.highest_bid || 0}M
+              {/* PLAYER 1 STATS */}
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-sm text-emerald-400">{player1Id}</span>
+                  <span className="text-xs font-mono text-slate-400">Cards: {p1TeamCount}/9</span>
+                </div>
+                <div className="flex justify-between text-xs text-slate-300">
+                  <span>Budget: <strong className="text-emerald-400">{safeState.player1_budget ?? 100}M</strong></span>
+                  <span>Spent: <strong className="text-amber-400">{safeState.player1_total_spent || 0}M</strong></span>
+                </div>
+              </div>
+
+              {/* OPPONENT STATS */}
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-sm text-purple-400">{opponentInfo.name}</span>
+                  <span className="text-xs font-mono text-slate-400">Cards: {p2TeamCount}/9</span>
+                </div>
+                <div className="flex justify-between text-xs text-slate-300">
+                  <span>Budget: <strong className="text-purple-400">{p2Budget}M</strong></span>
+                  <span>Mindset: <strong className="text-white">{opponentInfo.current_mindset || 'MASTERMIND'}</strong></span>
+                </div>
+              </div>
+
             </div>
 
-            {/* ACTION BUTTONS */}
-            {!isAuctionComplete ? (
-              <div className="flex gap-2 w-full pt-2">
-                <Button 
-                  onClick={() => handlePlaceBid((safeState.highest_bid || 0) + 5)}
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs transition"
-                >
-                  Place Bid (+5M) 💰
-                </Button>
-                <Button 
-                  onClick={handleSkipBid}
-                  className="px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl text-xs transition"
-                >
-                  Skip ⏭️
-                </Button>
+            {/* MATCH RESULT DISPLAY */}
+            {displayMatchResult && (
+              <div className="bg-slate-900 border border-emerald-500/40 rounded-3xl p-6 shadow-2xl text-center space-y-4 animate-fade-in">
+                <h3 className="text-xl font-bold text-emerald-400">Match Result 🏆</h3>
+                <div className="text-4xl font-black font-mono tracking-wider text-white">
+                  {displayMatchResult.score.player1} - {displayMatchResult.score.player2}
+                </div>
+                <p className="text-xs text-slate-400">Winner: <span className="text-white font-bold">{displayMatchResult.winner === 'player1' ? player1Id : opponentInfo.name}</span></p>
+                <div className="space-y-2 pt-2">
+                  {displayMatchResult.commentary?.slice(-3).map((comm: any, idx: number) => (
+                    <p key={idx} className="text-xs text-slate-300 bg-slate-950 p-2.5 rounded-xl border border-slate-800">{comm.description}</p>
+                  ))}
+                </div>
               </div>
-            ) : (
-              <Button 
-                onClick={handleStartMatch}
-                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-3 rounded-xl text-sm transition shadow-lg shadow-blue-900/40 flex items-center justify-center gap-2"
-              >
-                <Play size={16} /> Start Match Simulation ⚽
-              </Button>
             )}
-          </div>
 
-          {/* OPPONENT STATS */}
-          <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 space-y-3">
-            <h3 className="text-sm font-bold text-purple-400 flex items-center gap-2">
-              <Bot size={16} /> {opponentInfo.name}
-            </h3>
-            <div className="flex justify-between text-xs text-slate-300">
-              <span>Budget: <strong className="text-purple-400">{p2Budget}M</strong></span>
-              <span>Cards: <strong className="text-white">{p2TeamCount}/9</strong></span>
-            </div>
           </div>
 
         </div>
-
-        {/* MATCH RESULT DISPLAY */}
-        {displayMatchResult && (
-          <div className="bg-slate-950 p-6 rounded-2xl border border-emerald-500/30 text-center space-y-3">
-            <h3 className="text-lg font-bold text-emerald-400">Match Result 🏆</h3>
-            <div className="text-3xl font-black font-mono tracking-wider">
-              {displayMatchResult.score.player1} - {displayMatchResult.score.player2}
-            </div>
-            <p className="text-xs text-slate-400">Winner: <span className="text-white font-bold">{displayMatchResult.winner === 'player1' ? player1Id : opponentInfo.name}</span></p>
-          </div>
-        )}
 
       </div>
 
       {/* MYSTERY BOX MODAL */}
       {showMysteryBox && currentMysteryBox && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-amber-500/40 p-6 rounded-3xl max-w-sm w-full text-center space-y-4 shadow-2xl">
+          <div className="bg-slate-900 border border-amber-500/40 p-6 rounded-3xl max-w-sm w-full text-center space-y-4 shadow-2xl animate-scale-up">
             <div className="inline-flex p-3 bg-amber-500/20 text-amber-400 rounded-2xl border border-amber-500/30">
               <Gift size={32} />
             </div>
@@ -620,6 +1071,6 @@ export default function GamePage() {
           </div>
         </div>
       )}
-    </div>
+    </main>
   )
 }
