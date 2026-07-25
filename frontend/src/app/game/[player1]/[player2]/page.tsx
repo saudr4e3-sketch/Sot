@@ -874,4 +874,16 @@ export default function GamePage() {
   // =========================================================================
   // RENDER: MAIN GAME INTERFACE
   // =========================================================================
-  const safeState = auctionState || buildDefaultAuctionState(sessionId, player1Id, is
+  const safeState = auctionState || buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
+  const isAuctionComplete = safeState.status === 'completed' || safeState.status === 'match_completed'
+  const isPlayersTurn = safeState.current_turn_player === player1Id
+  const isMatchFinished = safeState.status === 'match_completed'
+
+  const opponentInfo = (safeState as any).opponent_info || {
+    id: player2Id,
+    name: player2Id === 'Goat_Bot' ? 'GOAT-X 🐐' : player2Id,
+    budget: 100,
+    cards_acquired: 0,
+    total_budget: 100,
+    current_mindset: 'MASTERMIND',
+    team: (safeState as any).team2 || [],
