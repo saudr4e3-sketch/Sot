@@ -3,7 +3,7 @@
  * OSM FUT Dual Battle - Enterprise Game Page Component
  * Architecture: Real-time WebSocket Auction & Match Simulation Hub
  * Developer: Saud Yahya Al-Faifi (Phone: 0535103986)
- * Version: 2.5.0 Production Enterprise Grade
+ * Version: 3.0.0 Production Enterprise Grade (WebSocket State Sync & Bot UI)
  * ============================================================================
  */
 
@@ -19,132 +19,11 @@ import AuctionProgress from '@/components/game/AuctionProgress'
 import CommentaryView from '@/components/game/CommentaryView'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
-import { AlertCircle, Loader, Play, Trophy, ShieldCheck, Zap, Activity, RefreshCw, Cpu, Database } from 'lucide-react'
+import { AlertCircle, Loader, Play, Trophy, ShieldCheck, Zap, Activity, RefreshCw, Cpu, Database, Coins, Users } from 'lucide-react'
 
-export default function GamePage() {
-  const params = useParams()
-  const player1Id = (params?.player1 as string) || 'Player1'
-  const player2Id = (params?.player2 as string) || 'Goat_Bot'
-  
-  const {
-    auctionState,
-    setAuctionState,
-    setIsLoading,
-    setError,
-    error: storeError,
-    isLoading,
-  } = useGameStore()
-  
-  const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`)
-  const [isInitialized, setIsInitialized] = useState(false)
-  const [commentary, setCommentary] = useState<any[]>([])
-  const [forceReady, setForceReady] = useState(false)
-  const [networkPing, setNetworkPing] = useState<number>(14)
-  const [clientLogs, setClientLogs] = useState<string[]>([])
-
-  const addLog = useCallback((logText: string) => {
-    const timestamp = new Date().toLocaleTimeString()
-    setClientLogs(prev => [`[${timestamp}] ${logText}`, ...prev.slice(0, 49)])
-  }, [])
-
-  // Local timer ticker with auto-skip safety trigger on zero
-  useEffect(() => {
-    if (!auctionState || auctionState.status === 'completed') return
-    const interval = setInterval(() => {
-      const currentTime = auctionState.timer_remaining ?? 30
-      if (currentTime > 1) {
-        setAuctionState({
-          ...auctionState,
-          timer_remaining: currentTime - 1
-        })
-      } else if (currentTime === 1) {
-        setAuctionState({
-          ...auctionState,
-          timer_remaining: 0
-        })
-        addLog('Timer reached zero. Triggering automatic phase advancement.')
-        handleSkipBid()
-      }
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [auctionState, setAuctionState, addLog])
-
-  const handleGameMessage = useCallback((message: GameMessage) => {
-    if (!message) return
-    addLog(`Received WebSocket message type: ${message.type}`)
-    
-    if (message.type === 'auction_started' || message.type === 'bot_joined' || message.type === 'state_update') {
-      if (message.data) {
-        setAuctionState(message.data)
-        addLog('Auction state successfully updated from server payload.')
-      }
-      setIsLoading(false)
-      setForceReady(true)
-    } else if (message.type === 'bid_placed' || message.type === 'turn_skipped') {
-      if (message.data) {
-        setAuctionState(message.data)
-        addLog(`Bid/Turn action processed successfully. Current highest bid: ${message.data.highest_bid}`)
-      }
-      setIsLoading(false)
-    } else if (message.type === 'auction_completed') {
-      if (message.data) {
-        setAuctionState(message.data.state || message.data)
-        addLog('Auction session concluded successfully. Entering match readiness phase.')
-      }
-      setIsLoading(false)
-    } else if (message.type === 'match_completed') {
-      if (message.data?.commentary) {
-        setCommentary(message.data.commentary)
-        addLog('Match simulation commentary stream compiled.')
-      }
-      setIsLoading(false)
-    } else if (message.error) {
-      setError(message.error)
-      addLog(`Server error reported: ${message.error}`)
-      setIsLoading(false)
-    }
-  }, [setAuctionState, setIsLoading, setError, addLog])
-
-  const { isConnected, send } = useWebSocket({
-    sessionId,
-    playerId: player1Id,
-    onMessage: handleGameMessage,
-    onConnect: () => {
-      setIsLoading(false)
-      addLog('WebSocket connection established successfully.')
-    },
-    onDisconnect: () => {
-      setError('Connection lost to game server. Please refresh the page.')
-      addLog('WebSocket disconnected abruptly.')
-    },
-  })
-
-  useEffect(() => {
-    if (!isInitialized && isConnected) {
-      setIsInitialized(true)
-      setIsLoading(true)
-      addLog('Initializing session handshake with backend...')
-      
-      if (player2Id === 'Goat_Bot') {
-        send({
-          type: 'add_bot',
-          action: 'add_bot',
-          session_id: sessionId,
-          player_id: player1Id,
-        })
-        addLog('Dispatched bot integration request for Goat_Bot.')
-      } else {
-        send({
-          type: 'start_auction',
-          action: 'start_auction',
-          opponent_id: player2Id,
-        })
-        addLog(`Dispatched multiplayer duel request against opponent: ${player2Id}`)
-      }
-    }
-  }, [isConnected, isInitialized, player2Id, send, setIsLoading, sessionId, player1Id, addLog])
-
-  const getDefaultState = (): AuctionState => ({
+// --- Helper Functions ---
+const buildDefaultAuctionState = (sessionId: string, player1Id: string): AuctionState => {
+  return {
     session_id: sessionId,
     status: 'bidding',
     timer_remaining: 30,
@@ -153,10 +32,20 @@ export default function GamePage() {
     current_turn_player: player1Id,
     current_position: 'GK',
     auction_index: 0,
-    total_positions: 10,
-    auction_sequence: ['GK', 'DEF', 'DEF', 'DEF', 'MID', 'MID', 'MID', 'ATT', 'ATT', 'MGR'],
+    total_positions: 9,
+    auction_sequence: ['GK', 'DEF', 'DEF', 'MID', 'MID', 'MID', 'ATT', 'ATT', 'MGR'],
     player1_team: {},
     player2_team: {},
+    opponent_info: {
+      id: 'Goat_Bot',
+      name: 'GOAT-X',
+      budget: 100,
+      cards_acquired: 0,
+      total_budget: 100,
+      current_mindset: 'MASTERMIND',
+      team: [],
+      is_bot: true
+    },
     current_player: { 
       rating: 90, 
       name: 'Thibaut Courtois', 
@@ -164,53 +53,279 @@ export default function GamePage() {
       image_url: 'https://cdn.sofifa.net/players/210/257/25_120.png',
       rarity: 'Legendary'
     }
-  } as unknown as AuctionState)
+  } as unknown as AuctionState;
+};
+
+export default function GamePage() {
+  const params = useParams();
+  const player1Id = (params?.player1 as string) || 'Player1';
+  const player2Id = (params?.player2 as string) || 'Goat_Bot';
+  
+  const {
+    auctionState,
+    setAuctionState,
+    setIsLoading,
+    setError,
+    error: storeError,
+    isLoading,
+  } = useGameStore();
+  
+  const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [commentary, setCommentary] = useState<any[]>([]);
+  const [forceReady, setForceReady] = useState(false);
+  const [networkPing, setNetworkPing] = useState<number>(14);
+  const [clientLogs, setClientLogs] = useState<string[]>([]);
+  
+  // مرجع لتخزين آخر حالة مزاد لمنع التحديثات غير الضرورية
+  const lastAuctionStateRef = useRef<AuctionState | null>(null);
+
+  const addLog = useCallback((logText: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setClientLogs(prev => [`[${timestamp}] ${logText}`, ...prev.slice(0, 49)]);
+  }, []);
+
+  /**
+   * =========================================================================
+   * CORE: WebSocket Message Handler (محسّن لاستقبال الحزمة الكاملة)
+   * =========================================================================
+   */
+  const handleGameMessage = useCallback((message: GameMessage) => {
+    if (!message) return;
+    addLog(`📩 Received: ${message.type}`);
+
+    // استخراج البيانات من الحزمة الجديدة
+    const payload = message.data || message.state || message;
+    
+    // تحديث حالة المتجر إذا كانت البيانات جديدة
+    if (payload && payload.auction_state) {
+      // الحزمة الكاملة من الباك-إند
+      const newState = {
+        ...payload.auction_state,
+        session_id: message.session_id || sessionId,
+        timer_remaining: payload.timer?.remaining ?? 30,
+        team1: payload.team1 || [],
+        team2: payload.team2 || [],
+        opponent_info: payload.opponent_info || {},
+        current_turn_player: payload.auction_state.current_turn_player || player1Id,
+      };
+      
+      // منع التحديث بنفس البيانات
+      if (JSON.stringify(newState) !== JSON.stringify(lastAuctionStateRef.current)) {
+        setAuctionState(newState as any);
+        lastAuctionStateRef.current = newState as any;
+        addLog(`✅ State updated. Turn: ${newState.current_turn_player}, Index: ${newState.auction_index}`);
+      }
+    } else if (payload && payload.status) {
+      // تحديث مباشر للحالة
+      if (JSON.stringify(payload) !== JSON.stringify(lastAuctionStateRef.current)) {
+        setAuctionState(payload);
+        lastAuctionStateRef.current = payload;
+      }
+    }
+
+    // معالجة الأحداث الخاصة
+    switch (message.type) {
+      case 'auction_started':
+      case 'bot_joined':
+      case 'state_update':
+      case 'auction_state':
+        setIsLoading(false);
+        setForceReady(true);
+        break;
+        
+      case 'bid_placed':
+        addLog(`💰 Bid placed by ${message.player_id}: ${message.amount}M`);
+        setIsLoading(false);
+        break;
+        
+      case 'turn_skipped':
+        addLog(`⏭️ ${message.player_id} skipped turn. Reason: ${message.reason || 'Strategic'}`);
+        setIsLoading(false);
+        break;
+        
+      case 'timer_expired':
+        addLog(`⏰ Timer expired for ${message.player_id}. Auto-advancing phase.`);
+        break;
+        
+      case 'auction_completed':
+        addLog('🏁 Auction session concluded. Ready for match simulation.');
+        setIsLoading(false);
+        break;
+        
+      case 'match_completed':
+        if (message.data?.commentary) {
+          setCommentary(message.data.commentary);
+          addLog('📊 Match simulation commentary compiled.');
+        }
+        setIsLoading(false);
+        break;
+        
+      case 'error':
+        setError(message.message || 'Unknown server error');
+        addLog(`❌ Server error: ${message.message}`);
+        setIsLoading(false);
+        break;
+        
+      case 'pong':
+        setNetworkPing(Date.now() - (message.timestamp ? new Date(message.timestamp).getTime() : Date.now()));
+        break;
+    }
+  }, [setAuctionState, setIsLoading, setError, addLog, sessionId, player1Id]);
+
+  const { isConnected, send } = useWebSocket({
+    sessionId,
+    playerId: player1Id,
+    onMessage: handleGameMessage,
+    onConnect: () => {
+      setIsLoading(false);
+      addLog('🔗 WebSocket connection established.');
+    },
+    onDisconnect: () => {
+      setError('Connection lost to game server. Please refresh the page.');
+      addLog('🔌 WebSocket disconnected.');
+    },
+  });
+
+  /**
+   * =========================================================================
+   * EFFECT: Keep-Alive Ping (كل 20 ثانية)
+   * =========================================================================
+   */
+  useEffect(() => {
+    if (!isConnected) return;
+    const keepAlive = setInterval(() => {
+      send({ type: 'ping', timestamp: new Date().toISOString() });
+    }, 20000);
+    return () => clearInterval(keepAlive);
+  }, [isConnected, send]);
+
+  /**
+   * =========================================================================
+   * EFFECT: Initialize Session (إرسال add_bot أو start_auction)
+   * =========================================================================
+   */
+  useEffect(() => {
+    if (!isInitialized && isConnected) {
+      setIsInitialized(true);
+      setIsLoading(true);
+      addLog('🚀 Initializing session handshake...');
+      
+      if (player2Id === 'Goat_Bot') {
+        send({
+          type: 'add_bot',
+          action: 'add_bot',
+          session_id: sessionId,
+          player_id: player1Id,
+        });
+        addLog('🤖 Bot integration request dispatched.');
+      } else {
+        send({
+          type: 'start_auction',
+          action: 'start_auction',
+          opponent_id: player2Id,
+        });
+        addLog(`👥 Multiplayer request against: ${player2Id}`);
+      }
+    }
+  }, [isConnected, isInitialized, player2Id, send, setIsLoading, sessionId, player1Id, addLog]);
+
+  /**
+   * =========================================================================
+   * EFFECT: Fallback State Loader & Local Timer with Auto-Skip
+   * =========================================================================
+   */
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setForceReady(true)
+    // تفعيل الوضع الاحتياطي بعد 2.5 ثانية إذا لم تصل بيانات
+    const fallbackTimer = setTimeout(() => {
       if (!auctionState) {
-        setAuctionState(getDefaultState())
-        addLog('Fallback default state loaded successfully due to initialization timeout.')
+        const defaultState = buildDefaultAuctionState(sessionId, player1Id);
+        setAuctionState(defaultState);
+        lastAuctionStateRef.current = defaultState;
+        setForceReady(true);
+        addLog('⚡ Fallback default state activated.');
       }
-    }, 1500)
-    return () => clearTimeout(timer)
-  }, [auctionState, player1Id, sessionId, setAuctionState, addLog])
+    }, 2500);
+    return () => clearTimeout(fallbackTimer);
+  }, [auctionState, player1Id, sessionId, setAuctionState, addLog]);
 
-  const handlePlaceBid = (amount: number) => {
-    setIsLoading(false)
-    addLog(`Attempting to place bid of amount: ${amount}`)
+  useEffect(() => {
+    // مسح المؤقت القديم عند تغير الحالة
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+    }
+
+    if (!auctionState || auctionState.status === 'completed') return;
+
+    // بدء مؤقت جديد
+    timerIntervalRef.current = setInterval(() => {
+      setAuctionState((prevState: any) => {
+        if (!prevState) return prevState;
+        
+        const currentTime = prevState.timer_remaining ?? 30;
+        const isMyTurn = prevState.current_turn_player === player1Id;
+        
+        if (currentTime > 1) {
+          return { ...prevState, timer_remaining: currentTime - 1 };
+        } else if (currentTime === 1 && isMyTurn) {
+          // الوقت انتهى وحان دوري -> أرسل تخطي تلقائي
+          addLog('⏰ Timer reached zero. Auto-skipping turn.');
+          handleSkipBid();
+          return { ...prevState, timer_remaining: 0 };
+        }
+        return prevState;
+      });
+    }, 1000);
+
+    return () => {
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    };
+  }, [auctionState?.status, auctionState?.current_turn_player, player1Id, addLog]);
+
+  /**
+   * =========================================================================
+   * EVENT HANDLERS: Bid, Skip, Match
+   * =========================================================================
+   */
+  const handlePlaceBid = useCallback((amount: number) => {
+    if (isLoading) return;
+    setIsLoading(true);
+    addLog(`💰 Placing bid: ${amount}M`);
     send({
       type: 'place_bid',
       action: 'place_bid',
       session_id: sessionId,
       player_id: player1Id,
       amount,
-    })
-  }
+    });
+  }, [send, sessionId, player1Id, isLoading, addLog, setIsLoading]);
 
-  const handleSkipBid = () => {
-    setIsLoading(false)
-    addLog('User or timer triggered skip turn / pass card action.')
+  const handleSkipBid = useCallback(() => {
+    if (isLoading) return;
+    setIsLoading(true);
+    addLog('⏭️ Skipping turn...');
     send({
       type: 'skip_bid',
       action: 'skip_bid',
       session_id: sessionId,
       player_id: player1Id,
-    })
-  }
+    });
+  }, [send, sessionId, player1Id, isLoading, addLog, setIsLoading]);
 
-  const handleStartMatch = () => {
-    setIsLoading(true)
-    addLog('Initiating match simulation protocol...')
+  const handleStartMatch = useCallback(() => {
+    setIsLoading(true);
+    addLog('⚽ Starting match simulation...');
     send({
       type: 'start_match',
       action: 'start_match',
       session_id: sessionId,
       player_id: player1Id,
-    })
-  }
+    });
+  }, [send, sessionId, player1Id, addLog, setIsLoading]);
 
+  // --- Render Logic ---
   if (!forceReady && (!isConnected && !auctionState)) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
@@ -220,9 +335,11 @@ export default function GamePage() {
           <p className="text-xs text-text-secondary">Establishing secure WebSocket tunnel...</p>
           <button 
             onClick={() => {
-              setForceReady(true)
-              setAuctionState(getDefaultState())
-              addLog('Manual bypass activated by user.')
+              setForceReady(true);
+              const defaultState = buildDefaultAuctionState(sessionId, player1Id);
+              setAuctionState(defaultState);
+              lastAuctionStateRef.current = defaultState;
+              addLog('🔧 Manual bypass activated.');
             }} 
             className="w-full py-2.5 bg-accent-terracotta text-white rounded-lg font-bold text-sm cursor-pointer shadow-lg hover:opacity-90 transition"
           >
@@ -230,19 +347,35 @@ export default function GamePage() {
           </button>
         </Card>
       </div>
-    )
+    );
   }
 
-  const safeState = auctionState || getDefaultState()
-  const isAuctionComplete = safeState.status === 'completed'
-  const isPlayersTurn = true
-
-  const p1TeamCount = safeState.player1_team ? Object.values(safeState.player1_team).flat().length : 0
-  const p2TeamCount = safeState.player2_team ? Object.values(safeState.player2_team).flat().length : 0
+  const safeState = auctionState || buildDefaultAuctionState(sessionId, player1Id);
+  const isAuctionComplete = safeState.status === 'completed';
+  const isPlayersTurn = safeState.current_turn_player === player1Id;
+  
+  // استخراج بيانات الخصم من الحالة
+  const opponentInfo = (safeState as any).opponent_info || {
+    id: player2Id,
+    name: player2Id === 'Goat_Bot' ? 'Goat AI 🐐' : player2Id,
+    budget: 100,
+    cards_acquired: 0,
+    total_budget: 100,
+    current_mindset: 'MASTERMIND',
+    team: (safeState as any).team2 || [],
+    is_bot: player2Id === 'Goat_Bot'
+  };
+  
+  const p1Team = (safeState as any).team1 || safeState.player1_team || [];
+  const p2Team = opponentInfo.team || (safeState as any).team2 || safeState.player2_team || [];
+  
+  const p1TeamCount = Array.isArray(p1Team) ? p1Team.length : Object.values(p1Team).flat().length;
+  const p2TeamCount = Array.isArray(p2Team) ? p2Team.length : Object.values(p2Team).flat().length;
+  const p2Budget = opponentInfo.budget || opponentInfo.total_budget || 100;
 
   return (
     <main className="min-h-screen bg-dark-bg text-text-primary selection:bg-accent-terracotta selection:text-white">
-      {/* Enterprise Header Bar */}
+      {/* ===== Enterprise Header Bar ===== */}
       <header className="bg-dark-bg-alt border-b border-dark-card sticky top-0 z-40 backdrop-blur-md bg-opacity-90">
         <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -268,7 +401,7 @@ export default function GamePage() {
         </div>
       </header>
 
-      {/* Main Container Layout */}
+      {/* ===== Main Container Layout ===== */}
       <div className="max-w-7xl mx-auto px-4 py-6 sm:py-8 space-y-6">
         {storeError && (
           <Card className="p-3 sm:p-4 bg-status-error/10 border border-status-error flex items-start gap-3 rounded-2xl shadow-lg">
@@ -280,10 +413,10 @@ export default function GamePage() {
           </Card>
         )}
 
-        {/* Grid Dashboard */}
+        {/* ===== Grid Dashboard ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* Left Column: Auction Timer & Team Squad Status */}
+          {/* ===== Left Column: Auction Timer & Team Squad Status ===== */}
           <div className="lg:col-span-2 space-y-6">
             <AuctionTimer
               timeRemaining={Math.max(0, safeState.timer_remaining ?? 30)}
@@ -293,58 +426,98 @@ export default function GamePage() {
               currentPlayer={safeState.current_player}
               onBid={handlePlaceBid}
               onSkip={handleSkipBid}
-              disabled={false}
+              disabled={!isPlayersTurn || isLoading || isAuctionComplete}
             />
 
-            {/* Comprehensive Squad Status Panel */}
+            {/* ===== Comprehensive Squad Status Panel ===== */}
             <Card className="p-5 sm:p-6 bg-gradient-to-br from-dark-bg-alt to-dark-bg border border-dark-card rounded-3xl shadow-xl space-y-4">
               <div className="flex items-center justify-between border-b border-dark-card pb-3">
                 <h3 className="font-black text-text-primary text-base sm:text-lg flex items-center gap-2">
                   <Trophy size={20} className="text-accent-gold" /> Squad Acquisition Matrix
                 </h3>
                 <span className="text-xs font-mono text-text-secondary bg-dark-card px-2.5 py-1 rounded-lg">
-                  Target: 10 Positions
+                  Target: 9 Positions
                 </span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Player 1 Card */}
                 <div className="p-4 rounded-2xl bg-dark-bg border-2 border-accent-terracotta/30 shadow-md relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-25 transition">
                     <ShieldCheck size={48} className="text-accent-terracotta" />
                   </div>
                   <p className="text-xs text-text-secondary font-bold uppercase tracking-wider mb-1">Your Franchise ({player1Id})</p>
                   <p className="text-3xl font-black font-mono text-accent-terracotta">
-                    {p1TeamCount} <span className="text-sm font-normal text-text-secondary">/ 10 Cards</span>
+                    {p1TeamCount} <span className="text-sm font-normal text-text-secondary">/ 9 Cards</span>
                   </p>
                   <div className="w-full bg-dark-card h-2 rounded-full mt-3 overflow-hidden">
-                    <div className="bg-accent-terracotta h-full transition-all duration-500" style={{ width: `${(p1TeamCount / 10) * 100}%` }}></div>
+                    <div className="bg-accent-terracotta h-full transition-all duration-500" style={{ width: `${(p1TeamCount / 9) * 100}%` }}></div>
                   </div>
+                  {/* عرض آخر 3 بطاقات مكتسبة */}
+                  {Array.isArray(p1Team) && p1Team.slice(-3).map((card: any, i: number) => (
+                    <div key={i} className="mt-2 text-xs text-text-secondary flex justify-between">
+                      <span>{card.name || card.position}</span>
+                      <span className="text-accent-terracotta">{card.rating || ''} ⭐</span>
+                    </div>
+                  ))}
                 </div>
 
+                {/* Opponent (Goat Bot) Card */}
                 <div className="p-4 rounded-2xl bg-dark-bg border-2 border-accent-gold/30 shadow-md relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-25 transition">
                     <Cpu size={48} className="text-accent-gold" />
                   </div>
-                  <p className="text-xs text-text-secondary font-bold uppercase tracking-wider mb-1">Opponent ({player2Id === 'Goat_Bot' ? 'Goat AI 🐐' : player2Id})</p>
+                  <p className="text-xs text-text-secondary font-bold uppercase tracking-wider mb-1">
+                    Opponent ({opponentInfo.name || 'Goat AI 🐐'})
+                  </p>
                   <p className="text-3xl font-black font-mono text-accent-gold">
-                    {p2TeamCount} <span className="text-sm font-normal text-text-secondary">/ 10 Cards</span>
+                    {p2TeamCount} <span className="text-sm font-normal text-text-secondary">/ 9 Cards</span>
                   </p>
                   <div className="w-full bg-dark-card h-2 rounded-full mt-3 overflow-hidden">
-                    <div className="bg-accent-gold h-full transition-all duration-500" style={{ width: `${(p2TeamCount / 10) * 100}%` }}></div>
+                    <div className="bg-accent-gold h-full transition-all duration-500" style={{ width: `${(p2TeamCount / 9) * 100}%` }}></div>
                   </div>
+                  
+                  {/* تفاصيل ميزانية الخصم وعقليته */}
+                  <div className="mt-3 space-y-1.5 text-xs">
+                    <div className="flex justify-between text-text-secondary">
+                      <span className="flex items-center gap-1"><Coins size={12} /> Budget</span>
+                      <span className="font-mono text-accent-gold">{p2Budget.toFixed(1)}M</span>
+                    </div>
+                    <div className="flex justify-between text-text-secondary">
+                      <span className="flex items-center gap-1"><Zap size={12} /> Mindset</span>
+                      <span className="font-mono text-emerald-400">{opponentInfo.current_mindset || 'MASTERMIND'}</span>
+                    </div>
+                    <div className="flex justify-between text-text-secondary">
+                      <span className="flex items-center gap-1"><Activity size={12} /> Status</span>
+                      <span className={`font-bold ${isPlayersTurn ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {isPlayersTurn ? 'Your Turn' : 'Thinking...'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* عرض آخر 3 بطاقات للخصم */}
+                  {Array.isArray(p2Team) && p2Team.slice(-3).map((card: any, i: number) => (
+                    <div key={i} className="mt-2 text-xs text-text-secondary flex justify-between">
+                      <span>{card.name || card.position}</span>
+                      <span className="text-accent-gold">{card.rating || ''} ⭐</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </Card>
 
-            {/* Advanced Diagnostics & Telemetry Console */}
+            {/* ===== Advanced Diagnostics & Telemetry Console ===== */}
             <Card className="p-5 bg-dark-bg-alt border border-dark-card rounded-3xl shadow-lg space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-black uppercase text-text-secondary tracking-widest flex items-center gap-1.5">
                   <Activity size={14} className="text-accent-terracotta" /> Telemetry & Event Stream Log
                 </span>
-                <span className="text-[10px] font-mono bg-dark-card px-2 py-0.5 rounded text-accent-gold">
-                  Buffer: {clientLogs.length} events
-                </span>
+                <button 
+                  onClick={() => setClientLogs([])}
+                  className="text-[10px] font-mono bg-dark-card px-2 py-0.5 rounded text-accent-gold hover:text-white transition"
+                >
+                  Clear Buffer ({clientLogs.length})
+                </button>
               </div>
               <div className="bg-dark-bg p-3 rounded-xl border border-dark-card font-mono text-[11px] h-32 overflow-y-auto space-y-1 text-text-secondary">
                 {clientLogs.length === 0 ? (
@@ -360,7 +533,7 @@ export default function GamePage() {
             </Card>
           </div>
 
-          {/* Right Column: Auction Progress, Commentary & Match Simulation Trigger */}
+          {/* ===== Right Column: Auction Progress, Commentary & Match Simulation ===== */}
           <div className="space-y-6">
             <AuctionProgress state={safeState} />
             <CommentaryView commentary={commentary} isLive={!isAuctionComplete} maxHeight="max-h-72 sm:max-h-[420px]" />
@@ -389,11 +562,11 @@ export default function GamePage() {
         </div>
       </div>
 
-      {/* Enterprise Footer */}
+      {/* ===== Enterprise Footer ===== */}
       <footer className="bg-dark-bg-alt border-t border-dark-card mt-12 py-8">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center text-center sm:text-left gap-4">
           <div>
-            <p className="text-text-primary font-bold text-sm">OSM FUT Dual Battle Engine</p>
+            <p className="text-text-primary font-bold text-sm">OSM FUT Dual Battle Engine v3.0</p>
             <p className="text-text-secondary text-xs mt-0.5">© 2026 All rights reserved. Built with Next.js & FastAPI.</p>
           </div>
           <div className="bg-dark-card px-4 py-2 rounded-2xl border border-dark-card shadow-inner">
@@ -403,5 +576,5 @@ export default function GamePage() {
         </div>
       </footer>
     </main>
-  )
+  );
 }
