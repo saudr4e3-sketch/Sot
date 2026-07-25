@@ -1,574 +1,784 @@
 /**
  * ============================================================================
- * OSM FUT Dual Battle - Enterprise Game Page Component
- * Architecture: Real-time WebSocket Auction & Match Simulation Hub
- * Developer: Saud Yahya Al-Faifi (Phone: 0535103986)
- * Version: 3.0.1 Production Enterprise Grade (TypeScript Strict Mode)
+ * OSM FUT Dual Battle - Centralized Game Type Definitions
+ * Version: 5.0.0 - Enterprise Grade, Fully Decoupled, No Circular Imports
  * ============================================================================
+ *
+ * This file contains ALL TypeScript type definitions for the OSM FUT Dual Battle
+ * game. It is a standalone module with zero internal imports to prevent any
+ * circular dependency or self-import issues during the build process.
+ *
+ * Types are organized by domain: Players, Auction, Match, WebSocket, and Store.
+ *
+ * @author Saud Yahya Al-Faifi
+ * @contact 0535103986
+ * @version 5.0.0
  */
 
-'use client'
+// ============================================================================
+// SECTION 1: CORE ENTITY TYPES
+// ============================================================================
 
-import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { useParams } from 'next/navigation'
-import { useGameStore } from '@/store/gameStore'
-import { useWebSocket } from '@/hooks/useWebSocket'
-import { GameMessage, AuctionState } from '@/types/game'
-import AuctionTimer from '@/components/game/AuctionTimer'
-import AuctionProgress from '@/components/game/AuctionProgress'
-import CommentaryView from '@/components/game/CommentaryView'
-import Button from '@/components/ui/Button'
-import Card from '@/components/ui/Card'
-import { AlertCircle, Loader, Play, Trophy, ShieldCheck, Zap, Activity, RefreshCw, Cpu, Database, Coins, Users } from 'lucide-react'
+/**
+ * Represents a football player's core attributes.
+ */
+export interface Player {
+  id: number
+  api_id: number
+  name: string
+  position: 'GK' | 'DEF' | 'MID' | 'ATT' | 'MGR' | string
+  rating: number
+  team: string
+  image_url: string
+  nationality: string
+  age: number
+  rarity: 'Legendary' | 'Medium' | 'Weak'
 
-const buildDefaultAuctionState = (sessionId: string, player1Id: string): AuctionState => {
-  return {
-    session_id: sessionId,
-    status: 'bidding',
-    timer_remaining: 30,
-    highest_bid: 0,
-    highest_bidder: null,
-    current_turn_player: player1Id,
-    current_position: 'GK',
-    auction_index: 0,
-    total_positions: 9,
-    auction_sequence: ['GK', 'DEF', 'DEF', 'MID', 'MID', 'MID', 'ATT', 'ATT', 'MGR'],
-    player1_team: {} as Record<string, any>,
-    player2_team: {} as Record<string, any>,
-    player1_budget: 100,
-    player2_budget: 100,
-    player1_total_spent: 0,
-    player2_total_spent: 0,
-    opponent_info: {
-      id: 'Goat_Bot',
-      name: 'GOAT-X',
-      budget: 100,
-      cards_acquired: 0,
-      total_budget: 100,
-      current_mindset: 'MASTERMIND',
-      team: [],
-      is_bot: true
-    } as any,
-    current_player: { 
-      rating: 90, 
-      name: 'Thibaut Courtois', 
-      position: 'GK',
-      image_url: 'https://cdn.sofifa.net/players/210/257/25_120.png',
-      rarity: 'Legendary'
-    }
-  } as AuctionState;
-};
+  pace?: number
+  shooting?: number
+  passing?: number
+  dribbling?: number
+  defending?: number
+  physical?: number
 
-export default function GamePage() {
-  const params = useParams();
-  const player1Id = (params?.player1 as string) || 'Player1';
-  const player2Id = (params?.player2 as string) || 'Goat_Bot';
-  
-  const {
-    auctionState,
-    setAuctionState,
-    setIsLoading,
-    setError,
-    error: storeError,
-    isLoading,
-  } = useGameStore();
-  
-  const [sessionId] = useState<string>(() => `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
-  const [isInitialized, setIsInitialized] = useState<boolean>(false);
-  const [commentary, setCommentary] = useState<any[]>([]);
-  const [forceReady, setForceReady] = useState<boolean>(false);
-  const [networkPing, setNetworkPing] = useState<number>(14);
-  const [clientLogs, setClientLogs] = useState<string[]>([]);
-  
-  const lastAuctionStateRef = useRef<AuctionState | null>(null);
-  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const currentAuctionStateRef = useRef<AuctionState | null>(null);
+  stamina?: number
+  aggression?: number
+  composure?: number
+  vision?: number
+  leadership?: number
 
-  const addLog = useCallback((logText: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    setClientLogs(prev => [`[${timestamp}] ${logText}`, ...prev.slice(0, 49)]);
-  }, []);
+  potential?: number
+  market_value?: string
+  weekly_wage?: number
+  contract_until?: string
+  playing_style?: string
+  is_custom?: boolean
 
-  const handleGameMessage = useCallback((message: GameMessage) => {
-    if (!message) return;
-    addLog(`📩 Received: ${message.type}`);
+  status?: 'active' | 'injured' | 'suspended' | 'fatigued'
+  injury_type?: string
+  fatigue_level?: number
+  morale?: number
+  form?: number
 
-    const payload = message.data || (message as any).state || message;
-    
-    if (payload && payload.auction_state) {
-      const newState: AuctionState = {
-        ...payload.auction_state,
-        session_id: message.session_id || sessionId,
-        timer_remaining: payload.timer?.remaining ?? 30,
-        opponent_info: payload.opponent_info || (payload.auction_state as any).opponent_info || {},
-        current_turn_player: payload.auction_state.current_turn_player || player1Id,
-      } as AuctionState;
-      
-      if (JSON.stringify(newState) !== JSON.stringify(lastAuctionStateRef.current)) {
-        setAuctionState(newState);
-        lastAuctionStateRef.current = newState;
-        currentAuctionStateRef.current = newState;
-        addLog(`✅ State updated. Turn: ${newState.current_turn_player}, Index: ${newState.auction_index}`);
-      }
-    } else if (payload && payload.status) {
-      if (JSON.stringify(payload) !== JSON.stringify(lastAuctionStateRef.current)) {
-        setAuctionState(payload as AuctionState);
-        lastAuctionStateRef.current = payload as AuctionState;
-        currentAuctionStateRef.current = payload as AuctionState;
-      }
-    }
+  special_traits?: string[]
+  skill_moves?: number
+  weak_foot_ability?: number
+  preferred_foot?: 'Left' | 'Right' | 'Both'
 
-    switch (message.type) {
-      case 'auction_started':
-      case 'bot_joined':
-      case 'state_update':
-      case 'auction_state':
-        setIsLoading(false);
-        setForceReady(true);
-        break;
-        
-      case 'bid_placed':
-        addLog(`💰 Bid placed by ${message.player_id}: ${message.amount}M`);
-        setIsLoading(false);
-        break;
-        
-      case 'turn_skipped':
-        addLog(`⏭️ ${message.player_id} skipped turn. Reason: ${(message as any).reason || 'Strategic'}`);
-        setIsLoading(false);
-        break;
-        
-      case 'timer_expired':
-        addLog(`⏰ Timer expired for ${message.player_id}. Auto-advancing phase.`);
-        break;
-        
-      case 'auction_completed':
-        addLog('🏁 Auction session concluded. Ready for match simulation.');
-        setIsLoading(false);
-        break;
-        
-      case 'match_completed':
-        if (message.data?.commentary) {
-          setCommentary(message.data.commentary);
-          addLog('📊 Match simulation commentary compiled.');
-        }
-        setIsLoading(false);
-        break;
-        
-      case 'error':
-        setError(message.message || 'Unknown server error');
-        addLog(`❌ Server error: ${message.message}`);
-        setIsLoading(false);
-        break;
-        
-      case 'pong':
-        setNetworkPing(Date.now() - (message.timestamp ? new Date(message.timestamp as string).getTime() : Date.now()));
-        break;
-    }
-  }, [setAuctionState, setIsLoading, setError, addLog, sessionId, player1Id]);
+  height_cm?: number
+  weight_kg?: number
 
-  const { isConnected, send } = useWebSocket({
-    sessionId,
-    playerId: player1Id,
-    onMessage: handleGameMessage,
-    onConnect: () => {
-      setIsLoading(false);
-      addLog('🔗 WebSocket connection established.');
-    },
-    onDisconnect: () => {
-      setError('Connection lost to game server. Please refresh the page.');
-      addLog('🔌 WebSocket disconnected.');
-    },
-  });
+  international_caps?: number
+  achievements?: string[]
 
-  useEffect(() => {
-    if (!isConnected) return;
-    const keepAlive = setInterval(() => {
-      send({ type: 'ping', timestamp: new Date().toISOString() });
-    }, 20000);
-    return () => clearInterval(keepAlive);
-  }, [isConnected, send]);
+  created_at?: string
+  updated_at?: string
+}
 
-  useEffect(() => {
-    if (!isInitialized && isConnected) {
-      setIsInitialized(true);
-      setIsLoading(true);
-      addLog('🚀 Initializing session handshake...');
-      
-      if (player2Id === 'Goat_Bot') {
-        send({
-          type: 'add_bot',
-          action: 'add_bot',
-          session_id: sessionId,
-          player_id: player1Id,
-        });
-        addLog('🤖 Bot integration request dispatched.');
-      } else {
-        send({
-          type: 'start_auction',
-          action: 'start_auction',
-          opponent_id: player2Id,
-        });
-        addLog(`👥 Multiplayer request against: ${player2Id}`);
-      }
-    }
-  }, [isConnected, isInitialized, player2Id, send, setIsLoading, sessionId, player1Id, addLog]);
+/**
+ * Represents a football manager's attributes.
+ */
+export interface Manager {
+  id: number
+  api_id: number
+  name: string
+  tactic_rating: number
+  nationality: string
+  image_url: string
+  experience: number
+  rarity: 'Legendary' | 'Medium' | 'Weak'
 
-  useEffect(() => {
-    const fallbackTimer = setTimeout(() => {
-      if (!auctionState) {
-        const defaultState = buildDefaultAuctionState(sessionId, player1Id);
-        setAuctionState(defaultState);
-        lastAuctionStateRef.current = defaultState;
-        currentAuctionStateRef.current = defaultState;
-        setForceReady(true);
-        addLog('⚡ Fallback default state activated.');
-      }
-    }, 2500);
-    return () => clearTimeout(fallbackTimer);
-  }, [auctionState, player1Id, sessionId, setAuctionState, addLog]);
+  preferred_formation?: string
+  secondary_formation?: string
+  tactical_style?: string
+  playing_style?: string
+  defensive_style?: string
+  attacking_style?: string
 
-  useEffect(() => {
-    currentAuctionStateRef.current = auctionState;
-  }, [auctionState]);
+  attack_coaching?: number
+  defense_coaching?: number
+  midfield_coaching?: number
+  youth_development?: number
+  motivation_skill?: number
+  discipline?: number
+  adaptability?: number
+  pressure_handling?: number
 
-  useEffect(() => {
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current);
-      timerIntervalRef.current = null;
-    }
+  description?: string
+  achievements?: string[]
+  special_abilities?: string[]
+  leadership_style?: string
+  philosophy?: string
+  market_value?: number
+  contract_until?: string
 
-    if (!auctionState || auctionState.status === 'completed') return;
+  created_at?: string
+  updated_at?: string
+}
 
-    timerIntervalRef.current = setInterval(() => {
-      const currentState = currentAuctionStateRef.current;
-      
-      if (!currentState) {
-        if (timerIntervalRef.current) {
-          clearInterval(timerIntervalRef.current);
-          timerIntervalRef.current = null;
-        }
-        return;
-      }
-      
-      const currentTime: number = currentState.timer_remaining ?? 30;
-      const isMyTurn: boolean = currentState.current_turn_player === player1Id;
-      
-      if (currentTime > 1) {
-        const updatedState: AuctionState = {
-          ...currentState,
-          timer_remaining: currentTime - 1,
-          opponent_info: currentState.opponent_info || (currentState as any).opponent_info,
-          player1_team: currentState.player1_team || (currentState as any).team1 || {},
-          player2_team: currentState.player2_team || (currentState as any).team2 || {},
-        } as AuctionState;
-        
-        setAuctionState(updatedState);
-        currentAuctionStateRef.current = updatedState;
-        lastAuctionStateRef.current = updatedState;
-      } else if (currentTime === 1 && isMyTurn) {
-        addLog('⏰ Timer reached zero. Auto-skipping turn.');
-        
-        const zeroState: AuctionState = {
-          ...currentState,
-          timer_remaining: 0,
-          opponent_info: currentState.opponent_info || (currentState as any).opponent_info,
-          player1_team: currentState.player1_team || (currentState as any).team1 || {},
-          player2_team: currentState.player2_team || (currentState as any).team2 || {},
-        } as AuctionState;
-        
-        setAuctionState(zeroState);
-        currentAuctionStateRef.current = zeroState;
-        lastAuctionStateRef.current = zeroState;
-        
-        if (timerIntervalRef.current) {
-          clearInterval(timerIntervalRef.current);
-          timerIntervalRef.current = null;
-        }
-        
-        handleSkipBid();
-      }
-    }, 1000);
+// ============================================================================
+// SECTION 2: CARD & COLLECTION TYPES
+// ============================================================================
 
-    return () => {
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
-        timerIntervalRef.current = null;
-      }
-    };
-  }, [auctionState?.status, auctionState?.current_turn_player, player1Id, addLog, setAuctionState]);
+export type CardType = 'player' | 'manager'
+export type AcquisitionMethod = 'auction' | 'mystery_card' | 'trade' | 'reward' | 'starter'
 
-  const handlePlaceBid = useCallback((amount: number) => {
-    if (isLoading) return;
-    setIsLoading(true);
-    addLog(`💰 Placing bid: ${amount}M`);
-    send({
-      type: 'place_bid',
-      action: 'place_bid',
-      session_id: sessionId,
-      player_id: player1Id,
-      amount,
-    });
-  }, [send, sessionId, player1Id, isLoading, addLog, setIsLoading]);
+/**
+ * Represents a card in a player's collection.
+ */
+export interface Card extends Partial<Player>, Partial<Manager> {
+  type: CardType
+  is_mystery: boolean
+  acquired_from: AcquisitionMethod
+  bid_amount?: number
+  acquired_at_timestamp?: number
+  card_id?: string
+  serial_number?: number
 
-  const handleSkipBid = useCallback(() => {
-    if (isLoading) return;
-    setIsLoading(true);
-    addLog('⏭️ Skipping turn...');
-    send({
-      type: 'skip_bid',
-      action: 'skip_bid',
-      session_id: sessionId,
-      player_id: player1Id,
-    });
-  }, [send, sessionId, player1Id, isLoading, addLog, setIsLoading]);
+  is_active?: boolean
+  is_injured?: boolean
+  matches_played?: number
+  goals_scored?: number
+  assists?: number
 
-  const handleStartMatch = useCallback(() => {
-    setIsLoading(true);
-    addLog('⚽ Starting match simulation...');
-    send({
-      type: 'start_match',
-      action: 'start_match',
-      session_id: sessionId,
-      player_id: player1Id,
-    });
-  }, [send, sessionId, player1Id, addLog, setIsLoading]);
+  purchase_price?: number
+  current_value?: number
 
-  if (!forceReady && (!isConnected && !auctionState)) {
-    return (
-      <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
-        <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4 shadow-2xl border-dark-card">
-          <Loader className="animate-spin mx-auto text-accent-terracotta" size={40} />
-          <p className="text-text-primary font-semibold">Connecting to game server...</p>
-          <p className="text-xs text-text-secondary">Establishing secure WebSocket tunnel...</p>
-          <button 
-            onClick={() => {
-              setForceReady(true);
-              const defaultState = buildDefaultAuctionState(sessionId, player1Id);
-              setAuctionState(defaultState);
-              lastAuctionStateRef.current = defaultState;
-              currentAuctionStateRef.current = defaultState;
-              addLog('🔧 Manual bypass activated.');
-            }} 
-            className="w-full py-2.5 bg-accent-terracotta text-white rounded-lg font-bold text-sm cursor-pointer shadow-lg hover:opacity-90 transition"
-          >
-            Start Auction Now ⚽
-          </button>
-        </Card>
-      </div>
-    );
+  chemistry_bonus?: number
+  position_bonus?: number
+}
+
+// ============================================================================
+// SECTION 3: AUCTION STATE TYPES
+// ============================================================================
+
+export type AuctionStatus =
+  | 'waiting'
+  | 'active'
+  | 'bidding'
+  | 'bid_placed'
+  | 'turn_passed'
+  | 'sold'
+  | 'mystery_generated'
+  | 'completed'
+  | 'idle'
+  | string
+
+export type AuctionPhase =
+  | 'pending'
+  | 'active'
+  | 'bidding'
+  | 'finalizing'
+  | 'sold'
+  | 'skipped'
+  | 'mystery'
+
+/**
+ * Represents the current player being auctioned, shown in the UI.
+ */
+export interface CurrentPlayerInfo {
+  name: string
+  position: string
+  rating: number
+  image_url?: string
+  rarity?: 'Legendary' | 'Medium' | 'Weak' | string
+  nationality?: string
+  team?: string
+  age?: number
+
+  pace?: number
+  shooting?: number
+  passing?: number
+  dribbling?: number
+  defending?: number
+  physical?: number
+  potential?: number
+  market_value?: string
+  playing_style?: string
+
+  card_id?: string
+  is_mystery?: boolean
+}
+
+/**
+ * Represents the complete state of an auction session.
+ */
+export interface AuctionState {
+  player1_id?: string
+  player2_id?: string
+
+  session_id: string
+  status: AuctionStatus
+  current_position: string
+
+  auction_index: number
+  total_positions: number
+  auction_sequence: string[]
+
+  current_turn_player: string
+  current_auction_phase?: AuctionPhase
+
+  highest_bid: number
+  highest_bidder: string | null
+
+  timer_remaining: number
+  timer_duration?: number
+  turn_started_at?: string
+  turn_timeout_seconds?: number
+
+  player1_budget: number
+  player1_total_spent: number
+  player1_remaining_budget?: number
+
+  player2_budget: number
+  player2_total_spent: number
+  player2_remaining_budget?: number
+
+  player1_team: Record<string, Card[]>
+  player2_team: Record<string, Card[]>
+
+  player1_cards_won?: number
+  player2_cards_won?: number
+  player1_bids_count?: number
+  player2_bids_count?: number
+  player1_skips_count?: number
+  player2_skips_count?: number
+
+  current_player?: CurrentPlayerInfo | null
+
+  is_auction_finished?: boolean
+  match_completed?: boolean
+  winner_id?: string | null
+
+  last_activity_timestamp?: number
+  game_mode?: string
+  difficulty_level?: string
+
+  bot_info?: BotInfo | null
+  opponent_info?: BotInfo | null
+
+  next_position?: string | null
+  auction_progress?: number
+
+  team1?: any[]
+  team2?: any[]
+}
+
+/**
+ * Represents information about the AI bot opponent.
+ */
+export interface BotInfo {
+  id: string
+  name: string
+  version?: string
+  budget: number
+  total_budget: number
+  cards_acquired: number
+  current_mindset?: string
+  risk_profile?: string
+  is_bot: boolean
+  team: any[]
+  difficulty?: string
+  strategy?: string
+  aggression_level?: number
+  last_action?: string
+}
+
+// ============================================================================
+// SECTION 4: MATCH & COMMENTARY TYPES
+// ============================================================================
+
+/**
+ * Represents a single commentary event during a match simulation.
+ */
+export interface Commentary {
+  minute: number
+  type: 'kickoff' | 'action' | 'goal' | 'save' | 'foul' | 'card' | 'halftime' | 'fulltime' | 'tactical_shift' | 'highlight' | string
+  text: string
+  author?: string
+  is_goal?: boolean
+  is_key_moment?: boolean
+  tone?: 'excited' | 'tense' | 'analytical' | 'dramatic' | 'neutral' | 'euphoric'
+  team_side?: 'home' | 'away' | 'player1' | 'player2'
+  impact_score?: number
+  event_category?: 'goal' | 'save' | 'foul' | 'card' | 'tactical_shift' | 'chance' | 'tackle' | 'highlight' | string
+}
+
+/**
+ * Represents a match event (goal, card, etc.).
+ */
+export interface MatchEvent {
+  minute: number
+  type: 'goal' | 'chance' | 'save' | 'tackle' | 'foul' | 'whistle' | 'highlight' | string
+  event: string
+  team: 'player1' | 'player2'
+}
+
+/**
+ * Represents a goal detail.
+ */
+export interface GoalDetail {
+  scorer: string
+  minute: number
+  goal_number: number
+  assist_by?: string
+  goal_type?: 'shot' | 'header' | 'penalty' | 'free_kick' | 'own_goal'
+}
+
+/**
+ * Represents match statistics.
+ */
+export interface MatchStatistics {
+  possession: { player1: number; player2: number }
+  shots: { player1: number; player2: number }
+  shots_on_target: { player1: number; player2: number }
+  corners: { player1: number; player2: number }
+  fouls: { player1: number; player2: number }
+  yellow_cards: { player1: number; player2: number }
+  red_cards: { player1: number; player2: number }
+  pass_accuracy: { player1: number; player2: number }
+}
+
+/**
+ * Represents a player's performance in a match.
+ */
+export interface PlayerPerformance {
+  rating: number
+  goals: number
+  assists: number
+  shots: number
+  passes: number
+  tackles: number
+  distance_covered_km?: number
+}
+
+/**
+ * Represents the final result of a simulated match.
+ */
+export interface MatchResult {
+  player1_score: number
+  player2_score: number
+
+  player1_strength: number
+  player2_strength: number
+  player1_tactic: number
+  player2_tactic: number
+  player1_luck: number
+  player2_luck: number
+
+  winner: 'player1' | 'player2' | 'draw'
+
+  commentary: Commentary[]
+  match_events?: MatchEvent[]
+
+  statistics?: MatchStatistics
+  goal_details?: {
+    player1: GoalDetail[]
+    player2: GoalDetail[]
   }
 
-  const safeState: AuctionState = auctionState || buildDefaultAuctionState(sessionId, player1Id);
-  const isAuctionComplete: boolean = safeState.status === 'completed';
-  const isPlayersTurn: boolean = safeState.current_turn_player === player1Id;
-  
-  const opponentInfo: any = (safeState as any).opponent_info || {
-    id: player2Id,
-    name: player2Id === 'Goat_Bot' ? 'Goat AI 🐐' : player2Id,
-    budget: 100,
-    cards_acquired: 0,
-    total_budget: 100,
-    current_mindset: 'MASTERMIND',
-    team: (safeState as any).team2 || [],
-    is_bot: player2Id === 'Goat_Bot'
-  };
-  
-  const p1Team: any[] = (safeState as any).team1 || safeState.player1_team || [];
-  const p2Team: any[] = opponentInfo.team || (safeState as any).team2 || safeState.player2_team || [];
-  
-  const p1TeamCount: number = Array.isArray(p1Team) ? p1Team.length : (typeof p1Team === 'object' ? Object.values(p1Team).flat().length : 0);
-  const p2TeamCount: number = Array.isArray(p2Team) ? p2Team.length : (typeof p2Team === 'object' ? Object.values(p2Team).flat().length : 0);
-  const p2Budget: number = opponentInfo.budget || opponentInfo.total_budget || 100;
+  match_summary?: string
+  man_of_the_match?: string
+  match_duration_seconds?: number
+  match_duration_minutes?: number
 
-  return (
-    <main className="min-h-screen bg-dark-bg text-text-primary selection:bg-accent-terracotta selection:text-white">
-      <header className="bg-dark-bg-alt border-b border-dark-card sticky top-0 z-40 backdrop-blur-md bg-opacity-90">
-        <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="text-2xl sm:text-3xl bg-dark-card p-2 rounded-2xl border border-dark-card shadow-inner">⚽</div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg sm:text-xl font-black tracking-tight text-text-primary">OSM FUT Dual Battle</h1>
-                <span className="bg-emerald-500/10 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-500/20">LIVE ENGINE</span>
-              </div>
-              <p className="text-xs text-text-secondary">Tactical Live Auction & Match Simulation Suite</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-3 bg-dark-card px-3 py-1.5 rounded-xl border border-dark-card text-xs font-mono">
-              <span className="flex items-center gap-1 text-emerald-400">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> {networkPing}ms
-              </span>
-              <span className="text-text-secondary">|</span>
-              <span className="text-text-secondary">Session: <strong className="text-accent-terracotta">{sessionId.slice(0, 12)}</strong></span>
-            </div>
-          </div>
-        </div>
-      </header>
+  total_shots_p1?: number
+  total_shots_p2?: number
+  possession_p1?: number
+  possession_p2?: number
 
-      <div className="max-w-7xl mx-auto px-4 py-6 sm:py-8 space-y-6">
-        {storeError && (
-          <Card className="p-3 sm:p-4 bg-status-error/10 border border-status-error flex items-start gap-3 rounded-2xl shadow-lg">
-            <AlertCircle className="text-status-error flex-shrink-0 mt-1" size={18} />
-            <div>
-              <p className="text-status-error text-sm font-bold">System Runtime Notification</p>
-              <p className="text-status-error text-xs opacity-90">{storeError}</p>
-            </div>
-          </Card>
-        )}
+  match_id?: string
+  match_date?: string
+  match_status?: 'completed' | 'forfeited' | 'draw'
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          <div className="lg:col-span-2 space-y-6">
-            <AuctionTimer
-              timeRemaining={Math.max(0, safeState.timer_remaining ?? 30)}
-              currentBid={safeState.highest_bid ?? 0}
-              isYourTurn={isPlayersTurn}
-              currentPosition={safeState.current_position ?? 'GK'}
-              currentPlayer={safeState.current_player}
-              onBid={handlePlaceBid}
-              onSkip={handleSkipBid}
-              disabled={!isPlayersTurn || isLoading || isAuctionComplete}
-            />
-
-            <Card className="p-5 sm:p-6 bg-gradient-to-br from-dark-bg-alt to-dark-bg border border-dark-card rounded-3xl shadow-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-dark-card pb-3">
-                <h3 className="font-black text-text-primary text-base sm:text-lg flex items-center gap-2">
-                  <Trophy size={20} className="text-accent-gold" /> Squad Acquisition Matrix
-                </h3>
-                <span className="text-xs font-mono text-text-secondary bg-dark-card px-2.5 py-1 rounded-lg">
-                  Target: 9 Positions
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-2xl bg-dark-bg border-2 border-accent-terracotta/30 shadow-md relative overflow-hidden group">
-                  <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-25 transition">
-                    <ShieldCheck size={48} className="text-accent-terracotta" />
-                  </div>
-                  <p className="text-xs text-text-secondary font-bold uppercase tracking-wider mb-1">Your Franchise ({player1Id})</p>
-                  <p className="text-3xl font-black font-mono text-accent-terracotta">
-                    {p1TeamCount} <span className="text-sm font-normal text-text-secondary">/ 9 Cards</span>
-                  </p>
-                  <div className="w-full bg-dark-card h-2 rounded-full mt-3 overflow-hidden">
-                    <div className="bg-accent-terracotta h-full transition-all duration-500" style={{ width: `${(p1TeamCount / 9) * 100}%` }}></div>
-                  </div>
-                  {Array.isArray(p1Team) && p1Team.slice(-3).map((card: any, i: number) => (
-                    <div key={i} className="mt-2 text-xs text-text-secondary flex justify-between">
-                      <span>{card.name || card.position}</span>
-                      <span className="text-accent-terracotta">{card.rating || ''} ⭐</span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="p-4 rounded-2xl bg-dark-bg border-2 border-accent-gold/30 shadow-md relative overflow-hidden group">
-                  <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-25 transition">
-                    <Cpu size={48} className="text-accent-gold" />
-                  </div>
-                  <p className="text-xs text-text-secondary font-bold uppercase tracking-wider mb-1">
-                    Opponent ({opponentInfo.name || 'Goat AI 🐐'})
-                  </p>
-                  <p className="text-3xl font-black font-mono text-accent-gold">
-                    {p2TeamCount} <span className="text-sm font-normal text-text-secondary">/ 9 Cards</span>
-                  </p>
-                  <div className="w-full bg-dark-card h-2 rounded-full mt-3 overflow-hidden">
-                    <div className="bg-accent-gold h-full transition-all duration-500" style={{ width: `${(p2TeamCount / 9) * 100}%` }}></div>
-                  </div>
-                  
-                  <div className="mt-3 space-y-1.5 text-xs">
-                    <div className="flex justify-between text-text-secondary">
-                      <span className="flex items-center gap-1"><Coins size={12} /> Budget</span>
-                      <span className="font-mono text-accent-gold">{p2Budget.toFixed(1)}M</span>
-                    </div>
-                    <div className="flex justify-between text-text-secondary">
-                      <span className="flex items-center gap-1"><Zap size={12} /> Mindset</span>
-                      <span className="font-mono text-emerald-400">{opponentInfo.current_mindset || 'MASTERMIND'}</span>
-                    </div>
-                    <div className="flex justify-between text-text-secondary">
-                      <span className="flex items-center gap-1"><Activity size={12} /> Status</span>
-                      <span className={`font-bold ${isPlayersTurn ? 'text-emerald-400' : 'text-amber-400'}`}>
-                        {isPlayersTurn ? 'Your Turn' : 'Thinking...'}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  {Array.isArray(p2Team) && p2Team.slice(-3).map((card: any, i: number) => (
-                    <div key={i} className="mt-2 text-xs text-text-secondary flex justify-between">
-                      <span>{card.name || card.position}</span>
-                      <span className="text-accent-gold">{card.rating || ''} ⭐</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </Card>
-
-            <Card className="p-5 bg-dark-bg-alt border border-dark-card rounded-3xl shadow-lg space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black uppercase text-text-secondary tracking-widest flex items-center gap-1.5">
-                  <Activity size={14} className="text-accent-terracotta" /> Telemetry & Event Stream Log
-                </span>
-                <button 
-                  onClick={() => setClientLogs([])}
-                  className="text-[10px] font-mono bg-dark-card px-2 py-0.5 rounded text-accent-gold hover:text-white transition"
-                >
-                  Clear Buffer ({clientLogs.length})
-                </button>
-              </div>
-              <div className="bg-dark-bg p-3 rounded-xl border border-dark-card font-mono text-[11px] h-32 overflow-y-auto space-y-1 text-text-secondary">
-                {clientLogs.length === 0 ? (
-                  <p className="italic opacity-50">Awaiting telemetry output...</p>
-                ) : (
-                  clientLogs.map((log, index) => (
-                    <div key={index} className="border-b border-dark-card/30 pb-0.5">
-                      <span className="text-accent-terracotta">&gt;</span> {log}
-                    </div>
-                  ))
-                )}
-              </div>
-            </Card>
-          </div>
-
-          <div className="space-y-6">
-            <AuctionProgress state={safeState} />
-            <CommentaryView commentary={commentary} isLive={!isAuctionComplete} maxHeight="max-h-72 sm:max-h-[420px]" />
-
-            {isAuctionComplete && (
-              <Card className="p-6 bg-gradient-to-br from-accent-terracotta/20 to-dark-bg border-2 border-accent-terracotta/50 rounded-3xl shadow-2xl text-center space-y-4 animate-pulse">
-                <div className="inline-flex p-3 bg-accent-terracotta text-white rounded-2xl shadow-lg">
-                  <Trophy size={28} />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-text-primary">Auction Completed!</h3>
-                  <p className="text-xs text-text-secondary mt-1">All tactical positions have been successfully filled. Ready to simulate match.</p>
-                </div>
-                <Button
-                  onClick={handleStartMatch}
-                  className="w-full font-black py-4 shadow-xl text-base"
-                  size="lg"
-                  loading={isLoading}
-                >
-                  <Play size={20} className="mr-2" />
-                  Start Match & Simulate ⚽
-                </Button>
-              </Card>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <footer className="bg-dark-bg-alt border-t border-dark-card mt-12 py-8">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center text-center sm:text-left gap-4">
-          <div>
-            <p className="text-text-primary font-bold text-sm">OSM FUT Dual Battle Engine v3.0.1</p>
-            <p className="text-text-secondary text-xs mt-0.5">© 2026 All rights reserved. Built with Next.js & FastAPI.</p>
-          </div>
-          <div className="bg-dark-card px-4 py-2 rounded-2xl border border-dark-card shadow-inner">
-            <p className="text-xs text-text-secondary">Lead Developer: <span className="text-accent-terracotta font-bold">Saud Yahya Al-Faifi</span></p>
-            <p className="text-xs font-mono text-amber-400 mt-0.5">Contact: 0535103986</p>
-          </div>
-        </div>
-      </footer>
-    </main>
-  );
+  player_performances?: Record<string, PlayerPerformance>
 }
+
+// ============================================================================
+// SECTION 5: WEBSOCKET COMMUNICATION TYPES
+// ============================================================================
+
+/**
+ * All possible WebSocket message types.
+ */
+export type WSMessageType =
+  | 'connected'
+  | 'auction_started'
+  | 'auction_state'
+  | 'auction_completed'
+  | 'bid_placed'
+  | 'bid_failed'
+  | 'turn_skipped'
+  | 'skip_failed'
+  | 'timer_update'
+  | 'timer_expired'
+  | 'match_starting'
+  | 'match_completed'
+  | 'mystery_card'
+  | 'bot_joined'
+  | 'state_update'
+  | 'error'
+  | 'ping'
+  | 'pong'
+  | 'info'
+  | string
+
+/**
+ * Represents the structure of a message sent or received via WebSocket.
+ */
+export interface GameMessage {
+  type: WSMessageType
+  action?: string
+  data?: any
+  state?: any
+  player_id?: string
+  amount?: number
+  session_id?: string
+  opponent_id?: string
+  error?: string
+  message?: string
+  timestamp?: number | string
+  status_code?: number
+  request_id?: string
+  reason?: string
+
+  timer?: {
+    remaining: number
+    duration: number
+    status: 'running' | 'paused' | 'expired' | 'stopped'
+    current_player_id?: string
+  }
+
+  bot_name?: string
+  bot_version?: string
+  bot_strategy?: string
+
+  winner_id?: string
+  commentary?: Commentary[]
+}
+
+/**
+ * Represents the state of the auction timer.
+ */
+export interface TimerState {
+  remaining: number
+  duration: number
+  status: 'running' | 'paused' | 'expired' | 'stopped'
+  currentPlayerId: string | null
+  startedAt: string | null
+  lastActivity: string | null
+}
+
+// ============================================================================
+// SECTION 6: BID & HISTORY TYPES
+// ============================================================================
+
+/**
+ * Represents a single bid placed during an auction.
+ */
+export interface Bid {
+  id: number
+  session_id: string
+  player_id: string
+  amount: number
+  card_position: number
+  bid_type?: 'standard' | 'counter' | 'aggressive'
+  is_bluff?: boolean
+  is_winning_bid?: boolean
+  status?: 'placed' | 'accepted' | 'rejected' | 'outbid'
+  timestamp: string
+  response_time_seconds?: number
+}
+
+/**
+ * Represents an entry in the bid history UI.
+ */
+export interface BidHistoryEntry {
+  amount: number
+  time: string
+  player: 'you' | 'opponent' | 'bot'
+  type: 'bid' | 'skip' | 'auto'
+  timestamp: number
+}
+
+// ============================================================================
+// SECTION 7: GAME SESSION & CONFIGURATION TYPES
+// ============================================================================
+
+/**
+ * Represents the full game session metadata.
+ */
+export interface GameSession {
+  id: string
+  player1_id: string
+  player2_id: string
+  status: AuctionStatus
+
+  current_turn: string | null
+  current_auction_phase?: AuctionPhase
+
+  player1_team: Record<string, Card[]>
+  player2_team: Record<string, Card[]>
+
+  auction_index: number
+  total_auctions: number
+  current_card_position?: string | null
+  highest_bid: number
+  highest_bidder: string | null
+
+  player1_budget: number
+  player2_budget: number
+  player1_total_spent: number
+  player2_total_spent: number
+  player1_remaining_budget?: number
+  player2_remaining_budget?: number
+
+  player1_cards_won: number
+  player2_cards_won: number
+  player1_bids_count: number
+  player2_bids_count: number
+  player1_skips_count: number
+  player2_skips_count: number
+
+  winner_id: string | null
+  match_completed: boolean
+
+  turn_started_at?: string | null
+  turn_timeout_seconds: number
+
+  game_mode?: string
+  difficulty_level?: string
+  settings?: Record<string, any>
+
+  created_at: string
+  updated_at: string
+  completed_at?: string | null
+  auction_started_at?: string | null
+  match_started_at?: string | null
+}
+
+/**
+ * Represents the global game configuration constants.
+ */
+export interface GameConfig {
+  auction_timer_duration: number
+  max_budget: number
+  min_bid_increment: number
+  total_auction_cards: number
+  auction_positions: string[]
+  mystery_card_probabilities: {
+    Legendary: number
+    Medium: number
+    Weak: number
+  }
+  match_simulation_weights: {
+    squad_strength: number
+    manager_tactic: number
+    luck: number
+  }
+}
+
+/**
+ * Represents WebSocket connection configuration.
+ */
+export interface WebSocketConfigEndpoint {
+  url: string
+  reconnect_interval: number
+  max_retries: number
+  protocols?: string[]
+  ping_interval?: number
+  timeout?: number
+}
+
+/**
+ * Represents the game connection state.
+ */
+export interface ConnectionInfo {
+  status: 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
+  latency_ms: number
+  last_ping_at?: string
+  last_pong_at?: string
+  reconnection_attempts: number
+}
+
+// ============================================================================
+// SECTION 8: USER & PROFILE TYPES
+// ============================================================================
+
+/**
+ * Represents a user's profile and preferences.
+ */
+export interface UserProfileConfig {
+  user_id: string
+  display_name: string
+  university_affilliation: string
+  academic_id: string
+  preferred_roastery: string
+  favorite_team: string
+  favorite_player: string
+  theme_mode?: 'dark' | 'light'
+
+  language?: string
+  notifications_enabled?: boolean
+  sound_enabled?: boolean
+
+  games_played?: number
+  games_won?: number
+  total_cards_collected?: number
+  total_spent?: number
+  rank?: number
+}
+
+// ============================================================================
+// SECTION 9: API RESPONSE TYPES
+// ============================================================================
+
+/**
+ * Generic API response wrapper.
+ */
+export interface ApiResponse<T = any> {
+  success: boolean
+  data?: T
+  error?: {
+    code: number
+    type: string
+    message: string
+    details?: any
+    request_id?: string
+  }
+  timestamp: string
+}
+
+/**
+ * Generic paginated response.
+ */
+export interface PaginatedResponse<T = any> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+  has_next: boolean
+  has_previous: boolean
+}
+
+// ============================================================================
+// SECTION 10: HISTORY TYPES
+// ============================================================================
+
+/**
+ * Represents a single item in the auction history.
+ */
+export interface AuctionHistoryItem {
+  round_index: number
+  position: string
+  winner_id: string | null
+  winning_bid: number
+  card_awarded: Card | null
+  timestamp: number
+  losing_player_received_mystery?: boolean
+  mystery_card?: Card
+}
+
+/**
+ * Represents a single item in the match history.
+ */
+export interface MatchHistoryItem {
+  match_id: string
+  opponent_id: string
+  opponent_name: string
+  player_score: number
+  opponent_score: number
+  winner_id: string
+  match_date: string
+  match_duration_seconds: number
+  commentary: Commentary[]
+}
+
+// ============================================================================
+// SECTION 11: TEAM & STATISTICS TYPES
+// ============================================================================
+
+/**
+ * Represents team-wide statistics.
+ */
+export interface TeamStatistics {
+  player_id: string
+  player_name?: string
+  is_bot?: boolean
+
+  total_cards: number
+  positions: Record<string, number>
+  auction_wins: number
+  mystery_cards: number
+
+  average_rating: number
+  highest_rated_player?: string
+  lowest_rated_player?: string
+
+  total_spent: number
+  remaining_budget: number
+  total_market_valuation: number
+
+  tactical_cohesion_score?: number
+  strongest_position?: string
+  weakest_position?: string
+
+  matches_played?: number
+  matches_won?: number
+  matches_lost?: number
+  matches_drawn?: number
+}
+
+// ============================================================================
+// SECTION 12: GAME STORE TYPES (for Zustand)
+// ============================================================================
+
+/**
+ * Represents a game event for logging/debugging.
+ */
+export interface GameEvent {
+  timestamp: string
+  type: string
+  message: string
+  data?: any
+}
+
+// ============================================================================
+// SECTION 13: UTILITY TYPES
+// ============================================================================
+
+export type Position = 'GK' | 'DEF' | 'MID' | 'ATT' | 'MGR'
+export type Rarity = 'Legendary' | 'Medium' | 'Weak'
+export type GameRolePlayer = 'player1' | 'player2'
+export type MatchWinner = 'player1' | 'player2' | 'draw'
+export type TeamSide = 'home' | 'away' | 'player1' | 'player2'
+export type BidType = 'standard' | 'counter' | 'aggressive'
+export type CardStatus = 'active' | 'injured' | 'benched'
+export type GameMode = 'standard' | 'tournament' | 'friendly' | 'ranked'
+export type Difficulty = 'easy' | 'normal' | 'hard' | 'legend'
+export type GamePhase = 'idle' | 'connecting' | 'auction' | 'match' | 'completed'
+export type TimerSeverity = 'normal' | 'warning' | 'critical' | 'expired'
+
+// ============================================================================
+// SECTION 14: GAME CONSTANTS
+// ============================================================================
+
+export const GAME_CONSTANTS = {
+  MAX_BUDGET: 100,
+  DEFAULT_TIMER: 30,
+  TOTAL_AUCTION_CARDS: 9,
+  MIN_BID_INCREMENT: 0.5,
+  MYSTERY_CARD_PROBABILITIES: {
+    Legendary: 0.30,
+    Medium: 0.30,
+    Weak: 0.40,
+  },
+  MATCH_WEIGHTS: {
+    squad_strength: 0.30,
+    manager_tactic: 0.30,
+    luck: 0.40,
+  },
+  POSITIONS: ['GK', 'DEF', 'MID', 'ATT', 'MGR'] as Position[],
+  AUCTION_SEQUENCE: ['GK', 'DEF', 'DEF', 'MID', 'MID', 'ATT', 'ATT', 'MGR', 'MGR'],
+} as const
