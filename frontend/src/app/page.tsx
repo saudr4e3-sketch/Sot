@@ -1,1076 +1,515 @@
-/**
- * ============================================================================
- * OSM FUT Dual Battle - Enterprise Game Page Component
- * Architecture: Real-time WebSocket Auction & Match Simulation Hub
- * Developer: Saud Yahya Al-Faifi (Phone: 0535103986)
- * Version: 7.0.0 - Mystery Box, Smart Match Engine, Anti-Duplicate Players
- * ============================================================================
- */
-
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { useParams } from 'next/navigation'
-import { useGameStore } from '@/store/gameStore'
-import { useWebSocket } from '@/hooks/useWebSocket'
-import AuctionTimer from '@/components/game/AuctionTimer'
-import AuctionProgress from '@/components/game/AuctionProgress'
-import CommentaryView from '@/components/game/CommentaryView'
-import MatchSimulation from '@/components/game/MatchSimulation'
-import MysteryBoxCard from '@/components/game/MysteryBoxCard'
+import { useRouter } from 'next/navigation'
+import { useState, useEffect, useRef } from 'react'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
-import { AlertCircle, Loader, Play, Trophy, ShieldCheck, Zap, Activity, Cpu, Coins, Wifi, WifiOff, Gift, Users, Bot } from 'lucide-react'
+import {
+  Trophy,
+  Users,
+  Zap,
+  Gamepad2,
+  ChevronDown,
+  Sparkles,
+  Crown,
+  Dices,
+  TrendingUp,
+  LogOut,
+  Star,
+  Shield,
+  Swords,
+  Flame,
+} from 'lucide-react'
 
-// ============================================================================
-// LOCAL TYPE DEFINITIONS
-// ============================================================================
-
-interface CurrentPlayerInfo {
+interface LeaderboardEntry {
+  rank: number
   name: string
-  position: string
+  tag: string
+  wins: number
+  losses: number
   rating: number
-  image_url?: string
-  rarity?: string
-  id?: string
+  streak: number
+  favoriteFormation: string
 }
 
-interface BotInfo {
-  id: string
-  name: string
-  budget: number
-  total_budget: number
-  cards_acquired: number
-  current_mindset?: string
-  is_bot: boolean
-  team: any[]
+interface RuleCard {
+  emoji: string
+  title: string
+  description: string
+  icon: React.ReactNode
 }
 
-interface MysteryBoxCard {
-  id: string
-  name: string
-  position: string
-  rating: number
-  rarity: 'Weak' | 'Medium' | 'Legendary'
-  image_url?: string
-}
-
-interface MatchResult {
-  winner: string
-  score: { player1: number; player2: number }
-  commentary: any[]
-  match_stats: {
-    possession: { player1: number; player2: number }
-    shots: { player1: number; player2: number }
-    rating_impact: number
-    tactic_impact: number
-    momentum_impact: number
+function generatePlayerTag(id: string): string {
+  if (!id.trim()) return ''
+  let hash = 0
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) >>> 0
   }
+  const tag = (hash % 90000) + 10000
+  return `#${tag}`
 }
 
-interface AuctionState {
-  session_id: string
-  status: string
-  current_position: string
-  auction_index: number
-  total_positions: number
-  auction_sequence: string[]
-  current_turn_player: string
-  highest_bid: number
-  highest_bidder: string | null
-  timer_remaining: number
-  player1_budget: number
-  player2_budget: number
-  player1_total_spent: number
-  player2_total_spent: number
-  player1_team: Record<string, any>
-  player2_team: Record<string, any>
-  opponent_info?: BotInfo
-  current_player?: CurrentPlayerInfo | null
-  team1?: any[]
-  team2?: any[]
-  is_bot_match?: boolean
-  mystery_boxes?: MysteryBoxCard[]
-  match_result?: MatchResult
-  last_auction_loser?: string
-  [key: string]: any
-}
-
-// ============================================================================
-// CONSTANTS & UTILITIES
-// ============================================================================
-
-const TOTAL_AUCTION_POSITIONS = 9
-const AUCTION_SEQUENCE = ['GK', 'DEF', 'DEF', 'MID', 'MID', 'MID', 'ATT', 'ATT', 'MGR']
-const DEFAULT_TIMER = 30
-const PING_INTERVAL_MS = 20000
-const FALLBACK_LOAD_DELAY_MS = 2500
-const TIMER_TICK_MS = 250
-const MAX_STUCK_AT_ZERO_MS = 4000
-
-// Mystery Box Probability Configuration
-const MYSTERY_BOX_PROBABILITIES = {
-  Weak: 0.40,
-  Medium: 0.30,
-  Legendary: 0.30
-}
-
-// Match Engine Weights
-const MATCH_WEIGHTS = {
-  RATING_WEIGHT: 0.40,
-  TACTIC_WEIGHT: 0.30,
-  MOMENTUM_WEIGHT: 0.30
-}
-
-const buildDefaultAuctionState = (sessionId: string, player1Id: string, isBotMatch: boolean = false): AuctionState => {
-  return {
-    session_id: sessionId,
-    status: 'bidding',
-    timer_remaining: DEFAULT_TIMER,
-    highest_bid: 0,
-    highest_bidder: null,
-    current_turn_player: player1Id,
-    current_position: 'GK',
-    auction_index: 0,
-    total_positions: TOTAL_AUCTION_POSITIONS,
-    auction_sequence: [...AUCTION_SEQUENCE],
-    player1_team: {} as Record<string, any>,
-    player2_team: {} as Record<string, any>,
-    player1_budget: 100,
-    player2_budget: 100,
-    player1_total_spent: 0,
-    player2_total_spent: 0,
-    is_bot_match: isBotMatch,
-    mystery_boxes: [],
-    opponent_info: isBotMatch ? {
-      id: 'Goat_Bot',
-      name: 'GOAT-X',
-      budget: 100,
-      cards_acquired: 0,
-      total_budget: 100,
-      current_mindset: 'MASTERMIND',
-      team: [],
-      is_bot: true
-    } as BotInfo : undefined,
-    current_player: null
-  } as AuctionState
-}
-
-// ============================================================================
-// MYSTERY BOX GENERATOR
-// ============================================================================
-const generateMysteryBox = (position: string): MysteryBoxCard => {
-  const rand = Math.random()
-  let rarity: 'Weak' | 'Medium' | 'Legendary'
-  
-  if (rand < MYSTERY_BOX_PROBABILITIES.Weak) {
-    rarity = 'Weak'
-  } else if (rand < MYSTERY_BOX_PROBABILITIES.Weak + MYSTERY_BOX_PROBABILITIES.Medium) {
-    rarity = 'Medium'
-  } else {
-    rarity = 'Legendary'
+function getInitials(id: string): string {
+  if (!id.trim()) return '?'
+  const parts = id.trim().split(/[\s_-]+/).filter(Boolean)
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase()
   }
-
-  const ratings = {
-    Weak: Math.floor(Math.random() * 10) + 70, // 70-79
-    Medium: Math.floor(Math.random() * 10) + 80, // 80-89
-    Legendary: Math.floor(Math.random() * 6) + 90 // 90-95
-  }
-
-  const mysteryPlayers = {
-    GK: ['Mystery Keeper X', 'Shadow Guardian', 'Phantom Wall'],
-    DEF: ['Iron Defender', 'Ghost Tackler', 'Mystery Shield'],
-    MID: ['Shadow Playmaker', 'Mystery Maestro', 'Phantom Passer'],
-    ATT: ['Ghost Striker', 'Mystery Finisher', 'Shadow Dribbler'],
-    MGR: ['Mystery Tactician', 'Phantom Coach', 'Shadow Strategist']
-  }
-
-  const names = mysteryPlayers[position as keyof typeof mysteryPlayers] || ['Mystery Player']
-  
-  return {
-    id: `mystery_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    name: names[Math.floor(Math.random() * names.length)],
-    position,
-    rating: ratings[rarity],
-    rarity,
-    image_url: undefined
-  }
+  return (parts[0][0] + parts[1][0]).toUpperCase()
 }
 
-// ============================================================================
-// MATCH ENGINE CALCULATOR
-// ============================================================================
-const calculateMatchResult = (
-  team1: any[],
-  team2: any[],
-  tactics1: any = {},
-  tactics2: any = {}
-): MatchResult => {
-  const avgRating1 = team1.reduce((sum: number, p: any) => sum + (p.rating || 75), 0) / Math.max(team1.length, 1)
-  const avgRating2 = team2.reduce((sum: number, p: any) => sum + (p.rating || 75), 0) / Math.max(team2.length, 1)
-  const ratingScore1 = (avgRating1 / 100) * MATCH_WEIGHTS.RATING_WEIGHT
-  const ratingScore2 = (avgRating2 / 100) * MATCH_WEIGHTS.RATING_WEIGHT
+const LEADERBOARD_DATA: LeaderboardEntry[] = [
+  { rank: 1, name: 'Al_Ghaith', tag: '#40217', wins: 312, losses: 58, rating: 2984, streak: 14, favoriteFormation: '4-3-3' },
+  { rank: 2, name: 'Nasser_King', tag: '#77812', wins: 298, losses: 71, rating: 2911, streak: 6, favoriteFormation: '4-2-3-1' },
+  { rank: 3, name: 'BidMaster_SA', tag: '#19934', wins: 275, losses: 64, rating: 2879, streak: 9, favoriteFormation: '3-5-2' },
+  { rank: 4, name: 'FalconTactics', tag: '#58261', wins: 260, losses: 80, rating: 2802, streak: 3, favoriteFormation: '4-4-2' },
+  { rank: 5, name: 'Riyadh_Manager', tag: '#63390', wins: 244, losses: 77, rating: 2755, streak: 5, favoriteFormation: '4-3-3' },
+  { rank: 6, name: 'GoldenBoot_7', tag: '#12045', wins: 231, losses: 90, rating: 2688, streak: -2, favoriteFormation: '4-2-3-1' },
+  { rank: 7, name: 'Sultan_Auctions', tag: '#88102', wins: 219, losses: 85, rating: 2643, streak: 4, favoriteFormation: '3-4-3' },
+  { rank: 8, name: 'DesertHawk', tag: '#30456', wins: 205, losses: 93, rating: 2590, streak: -1, favoriteFormation: '5-3-2' },
+  { rank: 9, name: 'MidfieldGeneral', tag: '#91723', wins: 198, losses: 101, rating: 2544, streak: 2, favoriteFormation: '4-3-3' },
+  { rank: 10, name: 'Zaeem_FC', tag: '#25587', wins: 187, losses: 96, rating: 2501, streak: 7, favoriteFormation: '4-4-2' },
+]
 
-  const tacticScore1 = ((tactics1.formation_synergy || 0.5) + (tactics1.playstyle_effectiveness || 0.5)) / 2 * MATCH_WEIGHTS.TACTIC_WEIGHT
-  const tacticScore2 = ((tactics2.formation_synergy || 0.5) + (tactics2.playstyle_effectiveness || 0.5)) / 2 * MATCH_WEIGHTS.TACTIC_WEIGHT
+const RULES: RuleCard[] = [
+  {
+    emoji: '🏆',
+    title: 'مرحلة المزاد',
+    description: 'ابنِ فريقك عبر مزايدة استراتيجية. الترتيب: حارس مرمى ← 2 مدافع ← 2 وسط ← 2 مهاجم ← 2 مدرب. كل مزايدة 30 ثانية فقط.',
+    icon: <Trophy size={28} className="text-accent-terracotta" />,
+  },
+  {
+    emoji: '🎲',
+    title: 'البطاقات الغامضة',
+    description: 'خسرت المزاد؟ تحصل على بطاقة غامضة فوراً! توزيع الاحتمالات: 30% أسطوري، 30% متوسط، 40% ضعيف.',
+    icon: <Dices size={28} className="text-accent-terracotta" />,
+  },
+  {
+    emoji: '⚽',
+    title: 'محاكاة المباراة',
+    description: 'تواجه الفرق ببعضها مع تعليق مباشر. النتيجة تُحسم عبر 30% قوة الفريق + 30% خطة المدرب + 40% الحظ.',
+    icon: <Swords size={28} className="text-accent-terracotta" />,
+  },
+  {
+    emoji: '👑',
+    title: 'نظام التصنيف',
+    description: 'كل انتصار يرفع تصنيفك العالمي (Rating) ويقربك من قمة لوحة المتصدرين الأسبوعية.',
+    icon: <Crown size={28} className="text-accent-terracotta" />,
+  },
+]
 
-  const momentum1 = Math.random() * MATCH_WEIGHTS.MOMENTUM_WEIGHT
-  const momentum2 = Math.random() * MATCH_WEIGHTS.MOMENTUM_WEIGHT
+const LIVE_STATS = [
+  { label: 'مزادات مكتملة', value: 184392, icon: <Trophy size={18} className="text-accent-terracotta" /> },
+  { label: 'مدير مسجل', value: 52810, icon: <Users size={18} className="text-accent-terracotta" /> },
+  { label: 'بطاقة أسطورية سُحبت', value: 27456, icon: <Star size={18} className="text-accent-terracotta" /> },
+  { label: 'مباراة الآن', value: 341, icon: <Flame size={18} className="text-accent-terracotta" /> },
+]
 
-  const totalScore1 = ratingScore1 + tacticScore1 + momentum1
-  const totalScore2 = ratingScore2 + tacticScore2 + momentum2
+export default function Home() {
+  const router = useRouter()
+  const [player1Id, setPlayer1Id] = useState('')
+  const [player2Id, setPlayer2Id] = useState('')
+  const [error, setError] = useState('')
+  const [showProfile, setShowProfile] = useState(false)
 
-  const winner = totalScore1 >= totalScore2 ? 'player1' : 'player2'
-  
-  const score1 = Math.max(0, Math.floor(totalScore1 * 5) + (winner === 'player1' ? 1 : 0))
-  const score2 = Math.max(0, Math.floor(totalScore2 * 5) + (winner === 'player2' ? 1 : 0))
+  const profileRef = useRef<HTMLDivElement>(null)
 
-  const possession1 = Math.floor(40 + (totalScore1 * 30))
-  const possession2 = 100 - possession1
+  const player1Tag = generatePlayerTag(player1Id)
+  const player2Tag = generatePlayerTag(player2Id)
 
-  const commentary = generateMatchCommentary(team1, team2, score1, score2, winner)
-
-  return {
-    winner,
-    score: { player1: score1, player2: score2 },
-    commentary,
-    match_stats: {
-      possession: { player1: possession1, player2: possession2 },
-      shots: { 
-        player1: Math.floor(score1 * 2 + Math.random() * 4),
-        player2: Math.floor(score2 * 2 + Math.random() * 4)
-      },
-      rating_impact: MATCH_WEIGHTS.RATING_WEIGHT * 100,
-      tactic_impact: MATCH_WEIGHTS.TACTIC_WEIGHT * 100,
-      momentum_impact: MATCH_WEIGHTS.MOMENTUM_WEIGHT * 100
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
+        setShowProfile(false)
+      }
     }
-  }
-}
-
-const generateMatchCommentary = (
-  team1: any[],
-  team2: any[],
-  score1: number,
-  score2: number,
-  winner: string
-): any[] => {
-  const events = []
-  const totalEvents = score1 + score2
-  let currentMinute = 0
-
-  for (let i = 0; i < totalEvents; i++) {
-    currentMinute = Math.floor(Math.random() * 90) + 1
-    const isHome = i < score1
-    const scorer = isHome 
-      ? team1[Math.floor(Math.random() * team1.length)]
-      : team2[Math.floor(Math.random() * team2.length)]
-    
-    events.push({
-      minute: currentMinute,
-      type: 'goal',
-      player: scorer?.name || 'Player',
-      team: isHome ? 'home' : 'away',
-      description: `GOAL! ${scorer?.name || 'Player'} scores in the ${currentMinute}th minute!`
-    })
-  }
-
-  events.sort((a, b) => a.minute - b.minute)
-
-  events.push({
-    minute: 90,
-    type: 'final',
-    description: `Full Time! ${winner === 'player1' ? 'Player 1' : 'Player 2'} wins ${score1}-${score2}!`
-  })
-
-  return events
-}
-
-// ============================================================================
-// MAIN COMPONENT
-// ============================================================================
-
-export default function GamePage() {
-  const params = useParams()
-  const player1Id = (params?.player1 as string) || 'Player1'
-  const player2Id = (params?.player2 as string) || 'Goat_Bot'
-  const isBotMatch = player2Id === 'Goat_Bot'
-
-  const {
-    auctionState,
-    setAuctionState,
-    setIsLoading,
-    setError,
-    error: storeError,
-    isLoading,
-  } = useGameStore()
-
-  const [sessionId] = useState<string>(() => `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`)
-  const [isInitialized, setIsInitialized] = useState<boolean>(false)
-  const [commentary, setCommentary] = useState<any[]>([])
-  const [forceReady, setForceReady] = useState<boolean>(false)
-  const [networkPing, setNetworkPing] = useState<number>(0)
-  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
-  const [clientLogs, setClientLogs] = useState<string[]>([])
-  const [showMysteryBox, setShowMysteryBox] = useState<boolean>(false)
-  const [currentMysteryBox, setCurrentMysteryBox] = useState<MysteryBoxCard | null>(null)
-  const [matchSimulation, setMatchSimulation] = useState<MatchResult | null>(null)
-  const [isSimulating, setIsSimulating] = useState<boolean>(false)
-  const [bidInProgress, setBidInProgress] = useState<boolean>(false)
-
-  const lastAuctionStateRef = useRef<AuctionState | null>(null)
-  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const currentAuctionStateRef = useRef<AuctionState | null>(null)
-  const isMountedRef = useRef<boolean>(true)
-  const isInitializedRef = useRef<boolean>(false)
-  const stuckAtZeroTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const autoSkipSentRef = useRef<boolean>(false)
-  const lastTurnPlayerRef = useRef<string>('')
-  const forceAdvanceTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const previousAuctionIndexRef = useRef<number>(-1)
-
-  const addLog = useCallback((logText: string) => {
-    if (!isMountedRef.current) return
-    const timestamp = new Date().toLocaleTimeString()
-    setClientLogs(prev => [`[${timestamp}] ${logText}`, ...prev.slice(0, 49)])
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const checkMysteryBoxAward = useCallback((currentState: AuctionState) => {
-    const prevIndex = previousAuctionIndexRef.current
-    const currentIndex = currentState.auction_index ?? 0
-    
-    if (prevIndex !== -1 && currentIndex > prevIndex) {
-      const prevHighestBidder = lastAuctionStateRef.current?.highest_bidder
-      const currentPosition = AUCTION_SEQUENCE[prevIndex]
-      
-      if (prevHighestBidder && prevHighestBidder !== player1Id && currentPosition) {
-        const mysteryBox = generateMysteryBox(currentPosition)
-        setCurrentMysteryBox(mysteryBox)
-        setShowMysteryBox(true)
-        addLog(`🎁 Mystery Box awarded: ${mysteryBox.name} (${mysteryBox.rarity})`)
-        
-        const updatedState = {
-          ...currentState,
-          mystery_boxes: [...(currentState.mystery_boxes || []), mysteryBox],
-          player1_team: {
-            ...currentState.player1_team,
-            [currentPosition]: [...((currentState.player1_team as any)?.[currentPosition] || []), mysteryBox]
-          }
-        }
-        setAuctionState(updatedState)
-      }
-    }
-    
-    previousAuctionIndexRef.current = currentIndex
-  }, [player1Id, addLog, setAuctionState])
-
-  const advanceLocally = useCallback(() => {
-    const currentState = currentAuctionStateRef.current
-    if (!currentState) return
-
-    const nextIndex = (currentState.auction_index ?? 0) + 1
-    const isFinished = nextIndex >= TOTAL_AUCTION_POSITIONS
-
-    addLog(`🔄 Local advance: moving from card ${(currentState.auction_index ?? 0) + 1} to ${nextIndex + 1}`)
-
-    const updatedState: AuctionState = {
-      ...currentState,
-      auction_index: nextIndex,
-      status: isFinished ? 'completed' : 'bidding',
-      timer_remaining: DEFAULT_TIMER,
-      current_turn_player: player1Id,
-      highest_bid: 0,
-      highest_bidder: null,
-      current_position: AUCTION_SEQUENCE[nextIndex] || 'MGR',
-    } as AuctionState
-
-    checkMysteryBoxAward(updatedState)
-    
-    setAuctionState(updatedState)
-    currentAuctionStateRef.current = updatedState
-    lastAuctionStateRef.current = updatedState
-    autoSkipSentRef.current = false
-
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current)
-      timerIntervalRef.current = null
-    }
-    if (stuckAtZeroTimerRef.current) {
-      clearTimeout(stuckAtZeroTimerRef.current)
-      stuckAtZeroTimerRef.current = null
-    }
-    if (forceAdvanceTimerRef.current) {
-      clearTimeout(forceAdvanceTimerRef.current)
-      forceAdvanceTimerRef.current = null
-    }
-  }, [player1Id, addLog, setAuctionState, checkMysteryBoxAward])
-
-  const handleGameMessage = useCallback((rawMessage: any) => {
-    if (!rawMessage || !isMountedRef.current) return
-
-    const message = rawMessage as Record<string, any>
-    const messageType = message.type || 'unknown'
-
-    addLog(`📩 Server: ${messageType}`)
-
-    const payload = message.data || message.state || message
-
-    if (payload && payload.auction_state) {
-      const newState: AuctionState = {
-        ...payload.auction_state,
-        session_id: message.session_id || sessionId,
-        timer_remaining: payload.timer?.remaining ?? DEFAULT_TIMER,
-        opponent_info: payload.opponent_info || (payload.auction_state as any)?.opponent_info || {},
-        current_turn_player: payload.auction_state.current_turn_player || player1Id,
-        is_bot_match: isBotMatch,
-      } as AuctionState
-
-      if (JSON.stringify(newState) !== JSON.stringify(lastAuctionStateRef.current)) {
-        checkMysteryBoxAward(newState)
-        setAuctionState(newState)
-        lastAuctionStateRef.current = newState
-        currentAuctionStateRef.current = newState
-        autoSkipSentRef.current = false
-        setBidInProgress(false)
-        addLog(`✅ State synced. Turn: ${newState.current_turn_player}, Card: ${(newState.auction_index ?? 0) + 1}/${TOTAL_AUCTION_POSITIONS}`)
-      }
-    } else if (payload && payload.status) {
-      if (JSON.stringify(payload) !== JSON.stringify(lastAuctionStateRef.current)) {
-        checkMysteryBoxAward(payload as AuctionState)
-        setAuctionState(payload as AuctionState)
-        lastAuctionStateRef.current = payload as AuctionState
-        currentAuctionStateRef.current = payload as AuctionState
-        autoSkipSentRef.current = false
-        setBidInProgress(false)
-      }
-    }
-
-    switch (messageType) {
-      case 'auction_started':
-      case 'bot_joined':
-        setIsLoading(false)
-        setForceReady(true)
-        break
-      case 'auction_state':
-      case 'state_update':
-        setIsLoading(false)
-        setBidInProgress(false)
-        break
-      case 'bid_confirmed':
-        addLog(`✅ Bid confirmed for ${message.amount}M`)
-        setBidInProgress(false)
-        setIsLoading(false)
-        break
-      case 'bid_placed':
-        addLog(`💰 ${message.player_id} bids ${message.amount}M`)
-        setIsLoading(false)
-        break
-      case 'bid_rejected':
-        addLog(`❌ Bid rejected: ${message.reason || 'Unknown'}`)
-        setBidInProgress(false)
-        setIsLoading(false)
-        break
-      case 'turn_skipped':
-        addLog(`⏭️ ${message.player_id} skipped`)
-        setIsLoading(false)
-        break
-      case 'timer_expired':
-        addLog(`⏰ Timeout for ${message.player_id}`)
-        break
-      case 'auction_completed':
-        addLog('🏁 Auction finished')
-        setIsLoading(false)
-        break
-      case 'match_result':
-      case 'match_completed':
-        if (message.data) {
-          const matchResult = message.data as MatchResult
-          setMatchSimulation(matchResult)
-          setCommentary(matchResult.commentary || [])
-          addLog(`⚽ Match completed! Winner: ${matchResult.winner}`)
-        }
-        setIsLoading(false)
-        setIsSimulating(false)
-        break
-      case 'error':
-        setError(message.message || 'Unknown error')
-        addLog(`❌ ${message.message}`)
-        setIsLoading(false)
-        setBidInProgress(false)
-        break
-      case 'pong':
-        setNetworkPing(Date.now() - (message.timestamp ? new Date(message.timestamp as string).getTime() : Date.now()))
-        break
-      default:
-        break
-    }
-  }, [setAuctionState, setIsLoading, setError, addLog, sessionId, player1Id, isBotMatch, checkMysteryBoxAward])
-
-  const { isConnected, send } = useWebSocket({
-    sessionId,
-    playerId: player1Id,
-    onMessage: handleGameMessage,
-    onConnect: () => {
-      if (!isMountedRef.current) return
-      setIsLoading(false)
-      setConnectionStatus('connected')
-      addLog('🔗 Connected to server')
-    },
-    onDisconnect: () => {
-      if (!isMountedRef.current) return
-      setConnectionStatus('disconnected')
-      addLog('🔌 Disconnected')
-    },
-  })
-
-  useEffect(() => {
-    setConnectionStatus(isConnected ? 'connected' : 'disconnected')
-  }, [isConnected])
-
-  useEffect(() => {
-    currentAuctionStateRef.current = auctionState as any
-  }, [auctionState])
-
-  useEffect(() => {
-    isMountedRef.current = true
-    return () => {
-      isMountedRef.current = false
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-      if (stuckAtZeroTimerRef.current) clearTimeout(stuckAtZeroTimerRef.current)
-      if (forceAdvanceTimerRef.current) clearTimeout(forceAdvanceTimerRef.current)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!isConnected) return
-    const keepAlive = setInterval(() => {
-      if (isMountedRef.current) send({ type: 'ping', timestamp: new Date().toISOString() } as any)
-    }, PING_INTERVAL_MS)
-    return () => clearInterval(keepAlive)
-  }, [isConnected, send])
-
-  useEffect(() => {
-    if (!isInitializedRef.current && isConnected && isMountedRef.current) {
-      isInitializedRef.current = true
-      setIsInitialized(true)
-      setIsLoading(true)
-      addLog('🚀 Starting session...')
-
-      if (isBotMatch) {
-        send({ 
-          type: 'init_bot_match', 
-          action: 'init_bot_match', 
-          session_id: sessionId, 
-          player_id: player1Id,
-          auction_sequence: AUCTION_SEQUENCE
-        } as any)
-      } else {
-        send({ 
-          type: 'join_room', 
-          action: 'join_room', 
-          room_pin: player2Id,
-          session_id: sessionId,
-          player_id: player1Id
-        } as any)
-      }
-    }
-  }, [isConnected, isInitialized, isBotMatch, player2Id, send, setIsLoading, sessionId, player1Id, addLog])
-
-  useEffect(() => {
-    const fallbackTimer = setTimeout(() => {
-      if (!auctionState && isMountedRef.current) {
-        const defaultState = buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
-        setAuctionState(defaultState)
-        lastAuctionStateRef.current = defaultState
-        currentAuctionStateRef.current = defaultState
-        setForceReady(true)
-        addLog('⚡ Offline mode activated')
-      }
-    }, FALLBACK_LOAD_DELAY_MS)
-    return () => clearTimeout(fallbackTimer)
-  }, [auctionState, player1Id, sessionId, setAuctionState, addLog, isBotMatch])
-
-  const handlePlaceBid = useCallback((amount: number) => {
-    if (!isConnected) {
-      addLog('⚠️ Cannot bid while offline')
+  const handleStartGame = () => {
+    if (!player1Id.trim()) {
+      setError('الرجاء إدخال معرف اللاعب الأول')
       return
     }
-    if (bidInProgress) {
-      addLog('⚠️ Bid already in progress')
+    if (!player2Id.trim()) {
+      setError('الرجاء إدخال معرف اللاعب الثاني')
       return
     }
-    
-    setBidInProgress(true)
-    setIsLoading(true)
-    addLog(`💰 Bidding ${amount}M`)
-    
-    send({ 
-      type: 'place_bid', 
-      action: 'place_bid', 
-      session_id: sessionId, 
-      player_id: player1Id, 
-      amount,
-      timestamp: Date.now()
-    } as any)
-    
-    setTimeout(() => {
-      if (bidInProgress && isMountedRef.current) {
-        setBidInProgress(false)
-        setIsLoading(false)
-        addLog('⚠️ Bid timeout - resetting state')
-      }
-    }, 5000)
-  }, [send, sessionId, player1Id, isConnected, addLog, setIsLoading, bidInProgress])
-
-  const handleSkipBid = useCallback(() => {
-    autoSkipSentRef.current = true
-    if (!isConnected) {
-      addLog('⚠️ Offline skip - advancing locally')
-      advanceLocally()
+    if (player1Id.trim() === player2Id.trim()) {
+      setError('يجب أن يكون معرفا اللاعبين مختلفين')
       return
     }
-    setIsLoading(true)
-    addLog('⏭️ Skipping turn')
-    send({ 
-      type: 'skip_bid', 
-      action: 'skip_bid', 
-      session_id: sessionId, 
-      player_id: player1Id,
-      timestamp: Date.now()
-    } as any)
-  }, [send, sessionId, player1Id, isConnected, addLog, setIsLoading, advanceLocally])
-
-  const handleStartMatch = useCallback(() => {
-    if (!isConnected && !isBotMatch) return
-    
-    setIsLoading(true)
-    setIsSimulating(true)
-    addLog('⚽ Starting match simulation')
-    
-    if (isBotMatch || !isConnected) {
-      const currentState = currentAuctionStateRef.current
-      if (currentState) {
-        const p1Team = (currentState.team1 || currentState.player1_team || []) as any[]
-        const p2Team = (currentState.team2 || currentState.player2_team || []) as any[]
-        
-        const result = calculateMatchResult(
-          Array.isArray(p1Team) ? p1Team : Object.values(p1Team).flat(),
-          Array.isArray(p2Team) ? p2Team : Object.values(p2Team).flat(),
-          { formation_synergy: 0.7, playstyle_effectiveness: 0.8 },
-          { formation_synergy: 0.75, playstyle_effectiveness: 0.85 }
-        )
-        
-        setMatchSimulation(result)
-        setCommentary(result.commentary)
-        setIsSimulating(false)
-        setIsLoading(false)
-        
-        const updatedState = {
-          ...currentState,
-          match_result: result,
-          status: 'match_completed'
-        }
-        setAuctionState(updatedState)
-        
-        addLog(`⚽ Match completed! ${result.score.player1}-${result.score.player2}`)
-      }
-    } else {
-      send({ 
-        type: 'start_match', 
-        action: 'start_match', 
-        session_id: sessionId, 
-        player_id: player1Id,
-        match_weights: MATCH_WEIGHTS
-      } as any)
-    }
-  }, [send, sessionId, player1Id, isConnected, addLog, setIsLoading, isBotMatch, setAuctionState])
-
-  const handleCloseMysteryBox = useCallback(() => {
-    setShowMysteryBox(false)
-    setCurrentMysteryBox(null)
-  }, [])
-
-  useEffect(() => {
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current)
-      timerIntervalRef.current = null
-    }
-    if (stuckAtZeroTimerRef.current) {
-      clearTimeout(stuckAtZeroTimerRef.current)
-      stuckAtZeroTimerRef.current = null
-    }
-    if (forceAdvanceTimerRef.current) {
-      clearTimeout(forceAdvanceTimerRef.current)
-      forceAdvanceTimerRef.current = null
-    }
-
-    if (!auctionState || auctionState.status === 'completed' || auctionState.status === 'match_completed') return
-
-    const currentTurn = auctionState.current_turn_player || ''
-    lastTurnPlayerRef.current = currentTurn
-
-    timerIntervalRef.current = setInterval(() => {
-      if (!isMountedRef.current) {
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-        return
-      }
-
-      const currentState = currentAuctionStateRef.current
-      if (!currentState) return
-
-      const currentTime: number = currentState.timer_remaining ?? DEFAULT_TIMER
-      const isMyTurn: boolean = currentState.current_turn_player === player1Id
-
-      if (currentTime > 1) {
-        const updatedState: AuctionState = {
-          ...currentState,
-          timer_remaining: currentTime - 1,
-          opponent_info: currentState.opponent_info || (currentState as any).opponent_info,
-          player1_team: currentState.player1_team || (currentState as any).team1 || {},
-          player2_team: currentState.player2_team || (currentState as any).team2 || {},
-        } as AuctionState
-
-        setAuctionState(updatedState)
-        currentAuctionStateRef.current = updatedState
-        lastAuctionStateRef.current = updatedState
-      } else if (currentTime <= 1) {
-        if (timerIntervalRef.current) {
-          clearInterval(timerIntervalRef.current)
-          timerIntervalRef.current = null
-        }
-
-        const zeroState: AuctionState = {
-          ...currentState,
-          timer_remaining: 0,
-          opponent_info: currentState.opponent_info || (currentState as any).opponent_info,
-          player1_team: currentState.player1_team || (currentState as any).team1 || {},
-          player2_team: currentState.player2_team || (currentState as any).team2 || {},
-        } as AuctionState
-
-        setAuctionState(zeroState)
-        currentAuctionStateRef.current = zeroState
-        lastAuctionStateRef.current = zeroState
-
-        if (isMyTurn && !autoSkipSentRef.current) {
-          addLog('⏰ Timer reached zero - Your turn. Auto-skipping.')
-          handleSkipBid()
-        } else if (!isMyTurn && !autoSkipSentRef.current) {
-          addLog('⏰ Timer reached zero - Opponent turn. Waiting for server or advancing.')
-          if (!isConnected) {
-            addLog('📡 Offline detected during opponent timeout. Advancing locally.')
-            advanceLocally()
-          } else {
-            forceAdvanceTimerRef.current = setTimeout(() => {
-              if (currentAuctionStateRef.current?.timer_remaining === 0 && !autoSkipSentRef.current) {
-                addLog('🔄 Server did not respond. Advancing locally.')
-                advanceLocally()
-              }
-            }, MAX_STUCK_AT_ZERO_MS)
-          }
-        } else {
-          addLog('🛑 Timer at zero, but skip already sent. Waiting for server.')
-        }
-      }
-    }, TIMER_TICK_MS)
-
-    return () => {
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current)
-        timerIntervalRef.current = null
-      }
-      if (stuckAtZeroTimerRef.current) {
-        clearTimeout(stuckAtZeroTimerRef.current)
-        stuckAtZeroTimerRef.current = null
-      }
-      if (forceAdvanceTimerRef.current) {
-        clearTimeout(forceAdvanceTimerRef.current)
-        forceAdvanceTimerRef.current = null
-      }
-    }
-  }, [auctionState?.status, auctionState?.current_turn_player, player1Id, isConnected, addLog, setAuctionState, handleSkipBid, advanceLocally])
-
-  if (!forceReady && (!isConnected && !auctionState)) {
-    return (
-      <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
-        <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4 shadow-2xl border-dark-card">
-          <Loader className="animate-spin mx-auto text-accent-terracotta" size={40} />
-          <p className="text-text-primary font-semibold">Connecting to Game Server</p>
-          <p className="text-xs text-text-secondary">Secure WebSocket handshake in progress...</p>
-          
-          <div className="flex items-center justify-center gap-2 mt-2">
-            {isBotMatch ? (
-              <span className="bg-blue-500/20 text-blue-400 text-xs px-3 py-1 rounded-full flex items-center gap-1">
-                <Bot size={12} /> Vs GOAT-X
-              </span>
-            ) : (
-              <span className="bg-purple-500/20 text-purple-400 text-xs px-3 py-1 rounded-full flex items-center gap-1">
-                <Users size={12} /> Room: {player2Id}
-              </span>
-            )}
-          </div>
-          
-          <button
-            onClick={() => {
-              const defaultState = buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
-              setAuctionState(defaultState)
-              lastAuctionStateRef.current = defaultState
-              currentAuctionStateRef.current = defaultState
-              setForceReady(true)
-            }}
-            className="w-full py-2.5 bg-accent-terracotta text-white rounded-lg font-bold text-sm hover:opacity-90 transition"
-          >
-            Enter Offline Mode ⚽
-          </button>
-        </Card>
-      </div>
-    )
+    setError('')
+    router.push(`/game/${encodeURIComponent(player1Id.trim())}/${encodeURIComponent(player2Id.trim())}`)
   }
 
-  const safeState = auctionState || buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
-  const isAuctionComplete = safeState.status === 'completed' || safeState.status === 'match_completed'
-  const isPlayersTurn = safeState.current_turn_player === player1Id
-  const isMatchFinished = safeState.status === 'match_completed'
-
-  const opponentInfo = (safeState as any).opponent_info || {
-    id: player2Id,
-    name: player2Id === 'Goat_Bot' ? 'GOAT-X 🐐' : player2Id,
-    budget: 100,
-    cards_acquired: 0,
-    total_budget: 100,
-    current_mindset: 'MASTERMIND',
-    team: (safeState as any).team2 || [],
-    is_bot: player2Id === 'Goat_Bot'
+  const handlePlayVsGoat = () => {
+    if (!player1Id.trim()) {
+      setError('الرجاء إدخال معرف اللاعب الأول أولاً')
+      return
+    }
+    setError('')
+    router.push(`/game/${encodeURIComponent(player1Id.trim())}/Goat_Bot`)
   }
 
-  const p1Team = (safeState as any).team1 || safeState.player1_team || []
-  const p2Team = opponentInfo.team || (safeState as any).team2 || safeState.player2_team || []
-
-  const p1TeamCount = Array.isArray(p1Team) ? p1Team.length : (typeof p1Team === 'object' ? Object.values(p1Team).flat().length : 0)
-  const p2TeamCount = Array.isArray(p2Team) ? p2Team.length : (typeof p2Team === 'object' ? Object.values(p2Team).flat().length : 0)
-  const p2Budget = (opponentInfo as any).budget || (opponentInfo as any).total_budget || 100
-
-  const displayMatchResult = matchSimulation || safeState.match_result
+  const handleResetProfile = () => {
+    setPlayer1Id('')
+    setPlayer2Id('')
+    setError('')
+    setShowProfile(false)
+  }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white p-4 sm:p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        
-        {/* HEADER */}
-        <header className="bg-slate-900 border border-slate-800 rounded-3xl p-5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-2xl">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-2xl border border-emerald-500/20">
-              <Trophy size={28} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold tracking-tight">OSM FUT Dual Battle</h1>
-                <span className="text-[10px] font-mono px-2 py-0.5 bg-slate-800 text-slate-300 rounded-full">v7.0.0</span>
+    <main className="min-h-screen bg-dark-bg">
+      {/* Header */}
+      <header className="bg-dark-bg-alt border-b border-dark-card sticky top-0 z-50 backdrop-blur supports-[backdrop-filter]:bg-dark-bg-alt/90">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="text-4xl animate-bounce">⚽</div>
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-bold text-text-primary tracking-tight">
+                  OSM FUT Dual Battle
+                </h1>
+                <p className="text-xs sm:text-sm text-text-secondary">Real-time 1v1 Auction Game</p>
               </div>
-              <p className="text-xs text-slate-400">Self-Healing Auction Engine</p>
             </div>
-          </div>
 
-          <div className="flex items-center gap-3">
-            <span className="text-xs px-3.5 py-1.5 bg-emerald-500/20 text-emerald-400 rounded-xl font-mono border border-emerald-500/30 flex items-center gap-1.5">
-              {isBotMatch ? <Bot size={14} /> : <Users size={14} />}
-              {isBotMatch ? 'Vs GOAT-X (Bot)' : `Room: ${player2Id}`}
-            </span>
-            <span className={`text-xs px-3.5 py-1.5 rounded-xl font-mono flex items-center gap-1.5 border ${isConnected ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
-              {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
-              {isConnected ? 'Connected' : 'Offline'}
-            </span>
-          </div>
-        </header>
-
-        {/* MAIN GAME LAYOUT */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          
-          {/* LEFT: AUCTION & CONTROLS */}
-          <div className="lg:col-span-8 space-y-6">
-            
-            {/* LIVE AUCTION CARD */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden space-y-6">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none"></div>
-
-              <div className="flex justify-between items-center border-b border-slate-800/80 pb-4">
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-3 w-3">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                  </span>
-                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Live Auction Phase</span>
-                </div>
-                <div className="flex items-center gap-2 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800 font-mono text-sm text-amber-400">
-                  <span>⏱️ Time Left:</span>
-                  <span className="font-bold">{safeState.timer_remaining ?? 30}s</span>
-                </div>
+            <div className="flex items-center gap-4">
+              <div className="hidden sm:flex items-center gap-1.5 text-xs text-text-secondary bg-dark-card px-3 py-1.5 rounded-full border border-dark-card">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-terracotta opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-terracotta"></span>
+                </span>
+                v1.2.0 · Live
               </div>
 
-              {/* CARD DETAILS */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-                <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800/80 text-center space-y-3">
-                  <span className="text-xs font-mono uppercase bg-slate-900 px-3 py-1 rounded-full text-slate-300 border border-slate-800">
-                    Position: {safeState.current_position || 'GK'} ({ (safeState.auction_index ?? 0) + 1 } / 9)
-                  </span>
-
-                  {safeState.current_player ? (
-                    <div className="space-y-1">
-                      <h3 className="text-2xl font-black text-white">{safeState.current_player.name}</h3>
-                      <p className="text-sm font-bold text-emerald-400">Rating: {safeState.current_player.rating} | Rarity: {safeState.current_player.rarity || 'Elite'}</p>
-                    </div>
-                  ) : (
-                    <div className="py-8 space-y-2">
-                      <Loader className="animate-spin mx-auto text-emerald-400" size={32} />
-                      <p className="text-sm text-slate-400">Waiting for next player card...</p>
-                    </div>
-                  )}
-
-                  <div className="text-3xl font-black text-amber-400 font-mono pt-2">
-                    Current Bid: {safeState.highest_bid || 0}M
+              {/* Profile Avatar */}
+              <div className="relative" ref={profileRef}>
+                <button
+                  type="button"
+                  onClick={() => setShowProfile((prev) => !prev)}
+                  className="flex items-center gap-2 group cursor-pointer"
+                >
+                  <div
+                    className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border-2 transition-all ${
+                      player1Id.trim()
+                        ? 'bg-gradient-to-br from-accent-terracotta to-[#7a3b2e] text-white border-accent-terracotta shadow-lg shadow-accent-terracotta/30'
+                        : 'bg-dark-card text-text-secondary border-dark-card group-hover:border-accent-terracotta/50'
+                    }`}
+                  >
+                    {getInitials(player1Id)}
                   </div>
-                </div>
+                  <ChevronDown
+                    size={16}
+                    className={`text-text-secondary transition-transform hidden sm:block ${showProfile ? 'rotate-180' : ''}`}
+                  />
+                </button>
 
-                {/* BID ACTIONS */}
-                <div className="space-y-4">
-                  <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs text-slate-300">
-                    <div className="flex justify-between">
-                      <span>Turn Player:</span>
-                      <strong className="text-white">{safeState.current_turn_player === player1Id ? 'Your Turn 🟢' : "Opponent's Turn ⏳"}</strong>
+                {showProfile && (
+                  <div className="absolute right-0 mt-3 w-72 bg-dark-bg-alt border border-dark-card rounded-2xl shadow-2xl shadow-black/40 overflow-hidden z-50">
+                    <div className="bg-gradient-to-br from-accent-terracotta/20 to-transparent p-5 border-b border-dark-card">
+                      <div className="flex items-center gap-3">
+                        <div className="w-14 h-14 rounded-full flex items-center justify-center font-bold text-lg bg-gradient-to-br from-accent-terracotta to-[#7a3b2e] text-white border-2 border-accent-terracotta shadow-lg shadow-accent-terracotta/30">
+                          {getInitials(player1Id)}
+                        </div>
+                        <div>
+                          <p className="font-bold text-text-primary leading-tight">
+                            {player1Id.trim() || 'ضيف'}
+                          </p>
+                          <p className="text-xs text-accent-terracotta font-mono font-semibold">
+                            {player1Tag || 'أدخل معرفك للحصول على رقم'}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Highest Bidder:</span>
-                      <strong className="text-emerald-400">{safeState.highest_bidder || 'No Bids Yet'}</strong>
+                    <div className="p-4 space-y-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-text-secondary flex items-center gap-2">
+                          <Shield size={14} /> الحالة
+                        </span>
+                        <span className="text-green-500 font-semibold">
+                          {player1Id.trim() ? 'جاهز للمعركة' : 'غير مسجل'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-text-secondary flex items-center gap-2">
+                          <TrendingUp size={14} /> التصنيف
+                        </span>
+                        <span className="text-text-primary font-semibold">
+                          {player1Id.trim() ? '1000 (مبدئي)' : '—'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleResetProfile}
+                        className="w-full mt-2 flex items-center justify-center gap-2 text-sm text-status-error border border-status-error/30 hover:bg-status-error/10 rounded-lg py-2 transition-colors cursor-pointer"
+                      >
+                        <LogOut size={14} /> تسجيل خروج / مسح البيانات
+                      </button>
                     </div>
                   </div>
-
-                  {!isAuctionComplete ? (
-                    <div className="grid grid-cols-2 gap-3">
-                      <Button 
-                        onClick={() => handlePlaceBid((safeState.highest_bid || 0) + 5)}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl text-sm transition shadow-lg shadow-emerald-900/20"
-                      >
-                        Place Bid (+5M) 💰
-                      </Button>
-                      <Button 
-                        onClick={handleSkipBid}
-                        className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-3.5 rounded-xl text-sm transition"
-                      >
-                        Skip Turn ⏭️
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button 
-                      onClick={handleStartMatch}
-                      className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-4 rounded-xl text-base transition shadow-xl shadow-blue-900/40 flex items-center justify-center gap-2"
-                    >
-                      <Play size={18} /> Start Match Simulation ⚽
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-            </div>
-
-            {/* TELEMETRY CONSOLE */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
-              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300">
-                  <Activity size={16} className="text-emerald-400" /> Telemetry & Activity Console
-                </h3>
-                <span className="text-xs text-slate-500 font-mono">Real-time WebSocket Logs</span>
-              </div>
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/80 font-mono text-xs text-slate-400 h-40 overflow-y-auto space-y-1">
-                {clientLogs.length === 0 ? (
-                  <p className="text-slate-600">Connecting and waiting for server events...</p>
-                ) : (
-                  clientLogs.map((log, idx) => (
-                    <div key={idx} className="leading-relaxed">{log}</div>
-                  ))
                 )}
               </div>
             </div>
-
-          </div>
-
-          {/* RIGHT: SQUAD ACQUISITION MATRIX */}
-          <div className="lg:col-span-4 space-y-6">
-            
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-6">
-              <div className="flex justify-between items-center border-b border-slate-800 pb-4">
-                <h3 className="text-base font-bold flex items-center gap-2">
-                  <ShieldCheck className="text-emerald-400" size={20} /> Squad Matrix
-                </h3>
-                <span className="text-xs font-mono bg-slate-800 px-3 py-1 rounded-full text-slate-300">Target: 9 Cards</span>
-              </div>
-
-              {/* PLAYER 1 STATS */}
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-sm text-emerald-400">{player1Id}</span>
-                  <span className="text-xs font-mono text-slate-400">Cards: {p1TeamCount}/9</span>
-                </div>
-                <div className="flex justify-between text-xs text-slate-300">
-                  <span>Budget: <strong className="text-emerald-400">{safeState.player1_budget ?? 100}M</strong></span>
-                  <span>Spent: <strong className="text-amber-400">{safeState.player1_total_spent || 0}M</strong></span>
-                </div>
-              </div>
-
-              {/* OPPONENT STATS */}
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-sm text-purple-400">{opponentInfo.name}</span>
-                  <span className="text-xs font-mono text-slate-400">Cards: {p2TeamCount}/9</span>
-                </div>
-                <div className="flex justify-between text-xs text-slate-300">
-                  <span>Budget: <strong className="text-purple-400">{p2Budget}M</strong></span>
-                  <span>Mindset: <strong className="text-white">{opponentInfo.current_mindset || 'MASTERMIND'}</strong></span>
-                </div>
-              </div>
-
-            </div>
-
-            {/* MATCH RESULT DISPLAY */}
-            {displayMatchResult && (
-              <div className="bg-slate-900 border border-emerald-500/40 rounded-3xl p-6 shadow-2xl text-center space-y-4 animate-fade-in">
-                <h3 className="text-xl font-bold text-emerald-400">Match Result 🏆</h3>
-                <div className="text-4xl font-black font-mono tracking-wider text-white">
-                  {displayMatchResult.score.player1} - {displayMatchResult.score.player2}
-                </div>
-                <p className="text-xs text-slate-400">Winner: <span className="text-white font-bold">{displayMatchResult.winner === 'player1' ? player1Id : opponentInfo.name}</span></p>
-                <div className="space-y-2 pt-2">
-                  {displayMatchResult.commentary?.slice(-3).map((comm: any, idx: number) => (
-                    <p key={idx} className="text-xs text-slate-300 bg-slate-950 p-2.5 rounded-xl border border-slate-800">{comm.description}</p>
-                  ))}
-                </div>
-              </div>
-            )}
-
-          </div>
-
-        </div>
-
-      </div>
-
-      {/* MYSTERY BOX MODAL */}
-      {showMysteryBox && currentMysteryBox && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-amber-500/40 p-6 rounded-3xl max-w-sm w-full text-center space-y-4 shadow-2xl animate-scale-up">
-            <div className="inline-flex p-3 bg-amber-500/20 text-amber-400 rounded-2xl border border-amber-500/30">
-              <Gift size={32} />
-            </div>
-            <h3 className="text-xl font-bold">Mystery Box Unlocked! 🎁</h3>
-            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-1">
-              <p className="text-sm font-bold text-white">{currentMysteryBox.name}</p>
-              <p className="text-xs text-amber-400 font-semibold">Rarity: {currentMysteryBox.rarity} | Rating: {currentMysteryBox.rating}</p>
-            </div>
-            <Button 
-              onClick={handleCloseMysteryBox}
-              className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-3 rounded-xl text-sm transition"
-            >
-              Claim Player & Continue ⚡
-            </Button>
           </div>
         </div>
-      )}
+      </header>
+
+      {/* Hero Section */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-16">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+          {/* Left - Game Info */}
+          <div className="space-y-6">
+            <div className="inline-flex items-center gap-2 bg-accent-terracotta/10 border border-accent-terracotta/30 text-accent-terracotta text-xs font-semibold px-3 py-1.5 rounded-full">
+              <Sparkles size={14} />
+              أكثر من 52,000 مدير يلعبون الآن
+            </div>
+
+            <div>
+              <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-4 text-text-primary leading-tight">
+                معركة المزاد الرياضية <span className="text-accent-terracotta">الأقوى</span>
+              </h2>
+              <p className="text-text-secondary text-base sm:text-lg leading-relaxed">
+                نافس في مزادات تكتيكية لحظية 1 ضد 1. ابنِ فريق أحلامك عبر مزايدة استراتيجية، أدر قوة تشكيلتك، وعِش محاكاة مباريات مشوّقة بتعليق ديناميكي حي.
+              </p>
+            </div>
+
+            {/* Features */}
+            <div className="space-y-3">
+              <div className="flex gap-3 items-start">
+                <Zap className="text-accent-terracotta mt-1 flex-shrink-0" size={20} />
+                <div>
+                  <h3 className="font-semibold text-text-primary">مزادات لحظية</h3>
+                  <p className="text-sm text-text-secondary">مزايدة بنظام الأدوار خلال 30 ثانية مع بطاقات غامضة</p>
+                </div>
+              </div>
+              <div className="flex gap-3 items-start">
+                <Users className="text-accent-terracotta mt-1 flex-shrink-0" size={20} />
+                <div>
+                  <h3 className="font-semibold text-text-primary">مواجهات وجهاً لوجه</h3>
+                  <p className="text-sm text-text-secondary">محاكاة مباريات بعمق تكتيكي وتعليق حي مباشر</p>
+                </div>
+              </div>
+              <div className="flex gap-3 items-start">
+                <Trophy className="text-accent-terracotta mt-1 flex-shrink-0" size={20} />
+                <div>
+                  <h3 className="font-semibold text-text-primary">لعب استراتيجي</h3>
+                  <p className="text-sm text-text-secondary">أتقن تكتيكات المزاد وإدارة الفريق</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Live Stats Strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+              {LIVE_STATS.map((stat) => (
+                <div
+                  key={stat.label}
+                  className="bg-dark-bg-alt border border-dark-card rounded-xl p-3 text-center hover:border-accent-terracotta/40 transition-colors"
+                >
+                  <div className="flex justify-center mb-1">{stat.icon}</div>
+                  <p className="font-bold text-text-primary text-sm sm:text-base">
+                    {stat.value.toLocaleString('en-US')}
+                  </p>
+                  <p className="text-[10px] sm:text-xs text-text-secondary">{stat.label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right - Game Start Card */}
+          <Card className="p-6 sm:p-8 border border-dark-card relative overflow-hidden">
+            <div className="absolute -top-16 -right-16 w-40 h-40 bg-accent-terracotta/10 rounded-full blur-3xl pointer-events-none"></div>
+
+            <div className="flex items-center gap-2 mb-6 relative">
+              <Gamepad2 className="text-accent-terracotta" size={24} />
+              <h3 className="text-2xl font-bold text-text-primary">ابدأ مباراة جديدة</h3>
+            </div>
+
+            <div className="space-y-4 relative">
+              {error && (
+                <div className="p-3 rounded-btn bg-status-error/10 border border-status-error">
+                  <p className="text-sm text-status-error">{error}</p>
+                </div>
+              )}
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-semibold text-text-primary">
+                    معرف اللاعب الأول
+                  </label>
+                  {player1Tag && (
+                    <span className="text-xs font-mono font-bold text-accent-terracotta bg-accent-terracotta/10 px-2 py-0.5 rounded-full">
+                      {player1Tag}
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  placeholder="أدخل معرفك"
+                  value={player1Id}
+                  onChange={(e) => setPlayer1Id(e.target.value)}
+                  className="w-full"
+                  maxLength={50}
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-semibold text-text-primary">
+                    معرف اللاعب الثاني
+                  </label>
+                  {player2Tag && (
+                    <span className="text-xs font-mono font-bold text-accent-terracotta bg-accent-terracotta/10 px-2 py-0.5 rounded-full">
+                      {player2Tag}
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  placeholder="أدخل معرف الخصم"
+                  value={player2Id}
+                  onChange={(e) => setPlayer2Id(e.target.value)}
+                  className="w-full"
+                  maxLength={50}
+                />
+              </div>
+
+              <Button onClick={handleStartGame} className="w-full mt-2" size="lg">
+                ابدأ المزاد
+              </Button>
+
+              <div className="relative flex py-2 items-center">
+                <div className="flex-grow border-t border-dark-card"></div>
+                <span className="flex-shrink mx-4 text-text-secondary text-xs uppercase">أو</span>
+                <div className="flex-grow border-t border-dark-card"></div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handlePlayVsGoat}
+                className="w-full bg-dark-bg-alt hover:bg-dark-card text-text-primary border border-accent-terracotta/50 py-3.5 px-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer"
+              >
+                <span>🤖 العب ضد الذكاء الاصطناعي (Goat 🐐)</span>
+              </button>
+            </div>
+          </Card>
+        </div>
+      </section>
+
+      {/* Game Rules Section */}
+      <section className="bg-dark-bg-alt border-y border-dark-card py-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <h2 className="text-2xl sm:text-3xl font-bold mb-8 text-text-primary">كيف تعمل اللعبة</h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {RULES.map((rule) => (
+              <Card
+                key={rule.title}
+                className="p-6 hover:border-accent-terracotta/40 hover:-translate-y-1 transition-all duration-200"
+              >
+                <div className="text-4xl mb-3">{rule.emoji}</div>
+                <h3 className="font-bold text-text-primary mb-2">{rule.title}</h3>
+                <p className="text-sm text-text-secondary leading-relaxed">{rule.description}</p>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Leaderboard Section */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="flex items-center justify-between mb-8">
+          <h2 className="text-2xl sm:text-3xl font-bold text-text-primary flex items-center gap-2">
+            <Crown className="text-accent-terracotta" size={26} />
+            أفضل المدراء هذا الموسم
+          </h2>
+          <span className="text-xs text-text-secondary hidden sm:block">يتم التحديث كل ساعة</span>
+        </div>
+
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-dark-card text-text-secondary text-xs uppercase">
+                  <th className="text-right px-4 py-3 font-semibold">الترتيب</th>
+                  <th className="text-right px-4 py-3 font-semibold">اللاعب</th>
+                  <th className="text-right px-4 py-3 font-semibold hidden sm:table-cell">التشكيلة</th>
+                  <th className="text-right px-4 py-3 font-semibold">فوز/خسارة</th>
+                  <th className="text-right px-4 py-3 font-semibold hidden md:table-cell">السلسلة</th>
+                  <th className="text-right px-4 py-3 font-semibold">التصنيف</th>
+                </tr>
+              </thead>
+              <tbody>
+                {LEADERBOARD_DATA.map((entry) => (
+                  <tr
+                    key={entry.tag}
+                    className="border-b border-dark-card last:border-0 hover:bg-dark-card/60 transition-colors"
+                  >
+                    <td className="px-4 py-3 font-bold text-text-primary">
+                      <div className="flex items-center gap-1.5">
+                        {entry.rank === 1 && <Crown size={14} className="text-[#FFD700]" />}
+                        {entry.rank === 2 && <Crown size={14} className="text-[#C0C0C0]" />}
+                        {entry.rank === 3 && <Crown size={14} className="text-[#CD7F32]" />}
+                        #{entry.rank}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent-terracotta to-[#7a3b2e] flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                          {getInitials(entry.name)}
+                        </div>
+                        <div>
+                          <p className="font-semibold text-text-primary leading-tight">{entry.name}</p>
+                          <p className="text-[11px] text-accent-terracotta font-mono">{entry.tag}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-text-secondary hidden sm:table-cell">
+                      {entry.favoriteFormation}
+                    </td>
+                    <td className="px-4 py-3 text-text-secondary">
+                      <span className="text-green-500 font-semibold">{entry.wins}</span>
+                      {' / '}
+                      <span className="text-status-error font-semibold">{entry.losses}</span>
+                    </td>
+                    <td className="px-4 py-3 hidden md:table-cell">
+                      <span
+                        className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                          entry.streak >= 0
+                            ? 'text-green-500 bg-green-500/10'
+                            : 'text-status-error bg-status-error/10'
+                        }`}
+                      >
+                        {entry.streak >= 0 ? `+${entry.streak}` : entry.streak}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-bold text-accent-terracotta">
+                      {entry.rating.toLocaleString('en-US')}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </section>
+
+      {/* Footer with Developer Signature */}
+      <footer className="bg-dark-bg border-t border-dark-card py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row justify-between items-center text-center sm:text-left gap-2">
+            <p className="text-text-secondary text-sm">
+              © 2026 OSM FUT Dual Battle. All rights reserved.
+            </p>
+            <p className="text-text-secondary text-sm">
+              Developer: <span className="text-accent-terracotta font-semibold">Saud Yahya Al-Faifi</span> |{' '}
+              <span className="text-accent-terracotta font-semibold">0535103986</span>
+            </p>
+          </div>
+        </div>
+      </footer>
     </main>
   )
 }
