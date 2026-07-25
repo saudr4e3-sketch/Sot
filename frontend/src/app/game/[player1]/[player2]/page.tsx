@@ -306,7 +306,7 @@ export default function GamePage() {
 
   // Sync ref with state
   useEffect(() => {
-    currentAuctionStateRef.current = auctionState
+    currentAuctionStateRef.current = auctionState as any
   }, [auctionState])
 
   // Cleanup on unmount
