@@ -483,7 +483,7 @@ export default function GamePage() {
   const p2Team = safeState.team2 || safeState.player2_team || opponentInfo.team || []
   const p1TeamCount = Array.isArray(p1Team) ? p1Team.length : Object.values(p1Team).flat().length
   const p2TeamCount = Array.isArray(p2Team) ? p2Team.length : Object.values(p2Team).flat().length
-  const p2Budget = opponentInfo.budget || opponentInfo.total_budget || 100
+  const p2Budget = (opponentInfo as any).budget || (opponentInfo as any).total_budget || 100
   const displayMatchResult = matchSimulation || safeState.match_result
 
   return (
