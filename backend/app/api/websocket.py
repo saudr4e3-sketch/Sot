@@ -9,13 +9,15 @@ Advanced WebSocket System with Background Timer
 - بث مباشر لجميع المتصلين
 - تكامل مع بوت الذكاء الاصطناعي Goat
 - تنظيف تلقائي للموارد
+- تصحيح منطق تتابع المزاد وانتقال المؤشر
+- حزمة بيانات متكاملة للإرسال
 """
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 import json
 import logging
 import asyncio
-from typing import Dict, Set, Optional, Any
+from typing import Dict, Set, Optional, Any, List
 from datetime import datetime, timedelta
 from uuid import uuid4
 from enum import Enum
@@ -37,6 +39,7 @@ TIMER_CHECK_INTERVAL = 0.5   # فحص المؤقت كل نصف ثانية
 BOT_RESPONSE_DELAY = 1.5     # تأخير استجابة البوت (محاكاة تفكير)
 MAX_CONSECUTIVE_SKIPS = 2    # الحد الأقصى للتخطيات المتتالية
 CLEANUP_INTERVAL = 300       # تنظيف الجلسات غير النشطة كل 5 دقائق
+TOTAL_POSITIONS = 9          # إجمالي عدد المراكز في المزاد
 
 
 class TimerStatus(Enum):
@@ -417,49 +420,141 @@ class ConnectionManager:
         
         # تحديث حالة المزاد (تخطي تلقائي أو إنهاء)
         try:
-            success, state = auction.check_timer_expired()
+            success, state = auction.skip_bid(expired_player)
             
             if success:
                 # إيقاف المؤقت الحالي
                 timer.stop()
+                
+                # إرسال حالة المزاد المحدثة
+                payload = self._build_full_payload(session_id, state)
                 
                 if state.get("auction_completed"):
                     # اكتمل المزاد - إرسال النتيجة النهائية
                     await self.broadcast({
                         "type": "auction_completed",
                         "session_id": session_id,
-                        "data": state,
+                        **payload,
                         "timestamp": datetime.utcnow().isoformat(),
                     }, session_id)
                     logger.info(f"🏁 Auction completed for session {session_id}")
                 else:
-                    # تحديد اللاعب التالي
-                    next_player = state.get("current_turn_player")
-                    
                     # إرسال حالة المزاد المحدثة
                     await self.broadcast({
                         "type": "auction_state",
                         "session_id": session_id,
-                        "data": state,
+                        **payload,
                         "timestamp": datetime.utcnow().isoformat(),
                     }, session_id)
                     
-                    # بدء مؤقت للاعب التالي
-                    if next_player:
-                        await self.start_session_timer(session_id, next_player)
-                        
-                        # إذا كان الدور على البوت، نفذ حركته تلقائياً
-                        if next_player == "Goat_Bot" or "bot" in next_player.lower():
-                            await self._execute_bot_turn(session_id)
+                    # تحديد اللاعب التالي وبدء مؤقت جديد
+                    await self._advance_to_next_player(session_id, state)
             else:
                 logger.warning(f"⚠️ Timer expiration handling failed for session {session_id}")
                 
         except Exception as e:
             logger.error(f"❌ Error handling timer expiration: {e}")
     
+    async def _advance_to_next_player(self, session_id: str, state: dict) -> None:
+        """
+        التقدم إلى اللاعب التالي في المزاد
+        
+        Args:
+            session_id: معرف الجلسة
+            state: حالة المزاد الحالية
+        """
+        next_player = state.get("current_turn_player")
+        if next_player:
+            await self.start_session_timer(session_id, next_player)
+            
+            # إذا كان الدور على البوت، نفذ حركته تلقائياً
+            if next_player == "Goat_Bot" or "bot" in next_player.lower():
+                asyncio.create_task(self._execute_bot_turn(session_id))
+    
+    def _build_full_payload(self, session_id: str, state: dict) -> dict:
+        """
+        بناء حزمة بيانات متكاملة للإرسال للواجهة الأمامية
+        
+        Args:
+            session_id: معرف الجلسة
+            state: حالة المزاد
+            
+        Returns:
+            قاموس يحتوي على جميع البيانات المطلوبة
+        """
+        auction = self.get_session(session_id)
+        timer = self.get_timer(session_id)
+        
+        # بناء بيانات الفريقين
+        team1_data = self._build_team_data(auction.player1_team if auction else [])
+        team2_data = self._build_team_data(auction.player2_team if auction else [])
+        
+        # بناء بيانات البوت
+        bot_info = {
+            "id": "Goat_Bot",
+            "name": goat_ai.name if hasattr(goat_ai, 'name') else "Goat_Bot",
+            "version": goat_ai.version if hasattr(goat_ai, 'version') else "1.0",
+            "is_bot": True,
+            "team": team2_data,
+            "budget": state.get("player2_budget", 100),
+            "strategy": state.get("bot_strategy", "balanced"),
+        }
+        
+        # بناء بيانات المركز الحالي
+        current_position = state.get("current_position", {})
+        current_player_info = None
+        if current_position:
+            current_player_info = {
+                "position": current_position.get("position", "Unknown"),
+                "rating": current_position.get("rating", 0),
+                "name": current_position.get("name", "Unknown Player"),
+                "stats": current_position.get("stats", {}),
+            }
+        
+        payload = {
+            "session_id": session_id,
+            "data": state,
+            "timer": timer.to_dict() if timer else None,
+            "team1": team1_data,
+            "team2": team2_data,
+            "bot_info": bot_info,
+            "current_player": current_player_info,
+            "highest_bidder": state.get("highest_bidder", None),
+            "current_position_index": state.get("auction_index", 0),
+            "total_positions": TOTAL_POSITIONS,
+            "is_auction_complete": state.get("auction_completed", False),
+        }
+        
+        return payload
+    
+    def _build_team_data(self, team: List[dict]) -> List[dict]:
+        """
+        بناء بيانات فريق منظمة للواجهة الأمامية
+        
+        Args:
+            team: قائمة لاعبي الفريق
+            
+        Returns:
+            قائمة منظمة تحتوي على بيانات كل لاعب
+        """
+        team_data = []
+        for player in team:
+            player_info = {
+                "id": player.get("id", str(uuid4())),
+                "name": player.get("name", "Unknown"),
+                "position": player.get("position", "Unknown"),
+                "rating": player.get("rating", 0),
+                "stats": player.get("stats", {}),
+                "card_type": player.get("card_type", "standard"),
+                "acquired_for": player.get("acquired_for", 0),
+                "acquired_by": player.get("acquired_by", "unassigned"),
+            }
+            team_data.append(player_info)
+        return team_data
+    
     async def _execute_bot_turn(self, session_id: str) -> None:
         """
-        تنفيذ دور البوت تلقائياً
+        تنفيذ دور البوت تلقائياً مع إرسال تحديثات فورية
         
         Args:
             session_id: معرف الجلسة
@@ -473,17 +568,33 @@ class ConnectionManager:
                 return
             
             state = auction.get_auction_state()
+            
+            # التحقق من أن الدور ما زال على البوت
+            if state.get("current_turn_player") != "Goat_Bot":
+                return
+            
+            # التحقق من اكتمال المزاد
+            if state.get("auction_completed"):
+                payload = self._build_full_payload(session_id, state)
+                await self.broadcast({
+                    "type": "auction_completed",
+                    "session_id": session_id,
+                    **payload,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }, session_id)
+                return
+            
             current_bid = state.get("highest_bid", 0)
-            current_player = state.get("current_player", {})
-            player_rating = current_player.get("rating", 80)
-            player_position = current_player.get("position", "MID")
-            cards_remaining = 9 - state.get("auction_index", 0)
+            current_position = state.get("current_position", {})
+            player_rating = current_position.get("rating", 80)
+            player_position = current_position.get("position", "MID")
+            cards_remaining = TOTAL_POSITIONS - state.get("auction_index", 0)
             
             # استخدام ذكاء البوت لاتخاذ القرار
             bot_decision = goat_ai.decide_bid(
                 current_bid=current_bid,
                 player_rating=player_rating,
-                max_budget=100,
+                max_budget=state.get("player2_budget", 100),
                 position=player_position,
                 cards_remaining=cards_remaining
             )
@@ -494,48 +605,61 @@ class ConnectionManager:
                 success, state = auction.place_bid("Goat_Bot", bot_amount)
                 
                 if success:
+                    # إيقاف المؤقت الحالي
+                    await self.stop_session_timer(session_id)
+                    
+                    payload = self._build_full_payload(session_id, state)
+                    
                     await self.broadcast({
                         "type": "bid_placed",
                         "session_id": session_id,
                         "player_id": "Goat_Bot",
                         "amount": bot_amount,
                         "bot_strategy": bot_decision.get("strategy", "unknown"),
-                        "data": state,
+                        **payload,
                         "timestamp": datetime.utcnow().isoformat(),
                     }, session_id)
                     
-                    # بدء مؤقت للاعب البشري
-                    next_player = state.get("current_turn_player")
-                    if next_player:
-                        await self.start_session_timer(session_id, next_player)
+                    # التقدم للمركز التالي أو بدء مؤقت اللاعب البشري
+                    if state.get("auction_completed"):
+                        await self.broadcast({
+                            "type": "auction_completed",
+                            "session_id": session_id,
+                            **self._build_full_payload(session_id, state),
+                        }, session_id)
+                    else:
+                        await self._advance_to_next_player(session_id, state)
             else:
                 # البوت يتخطى
                 success, state = auction.skip_bid("Goat_Bot")
                 
                 if success:
+                    # إيقاف المؤقت الحالي
+                    await self.stop_session_timer(session_id)
+                    
+                    payload = self._build_full_payload(session_id, state)
+                    
                     await self.broadcast({
                         "type": "turn_skipped",
                         "session_id": session_id,
                         "player_id": "Goat_Bot",
                         "reason": bot_decision.get("reason", "تخطي استراتيجي"),
-                        "data": state,
+                        **payload,
                         "timestamp": datetime.utcnow().isoformat(),
                     }, session_id)
                     
-                    # التحقق من اكتمال المزاد
+                    # التحقق من اكتمال المزاد أو الانتقال للمركز/اللاعب التالي
                     if state.get("auction_completed"):
                         await self.broadcast({
                             "type": "auction_completed",
                             "session_id": session_id,
-                            "data": state,
+                            **self._build_full_payload(session_id, state),
                         }, session_id)
                     else:
-                        next_player = state.get("current_turn_player")
-                        if next_player:
-                            await self.start_session_timer(session_id, next_player)
+                        await self._advance_to_next_player(session_id, state)
                             
         except Exception as e:
-            logger.error(f"❌ Error executing bot turn: {e}")
+            logger.error(f"❌ Error executing bot turn: {e}", exc_info=True)
     
     def _start_cleanup_task(self) -> None:
         """بدء مهمة تنظيف الجلسات غير النشطة"""
@@ -697,6 +821,9 @@ async def handle_start_auction(
         state = auction.get_auction_state()
         logger.info(f"🔗 Player {player_id} joined existing session: {session_id}")
     
+    # بناء حزمة البيانات المتكاملة
+    payload = manager._build_full_payload(session_id, state)
+    
     # بدء المؤقت للاعب الأول
     current_turn = state.get("current_turn_player", player_id)
     await manager.start_session_timer(session_id, current_turn)
@@ -705,10 +832,14 @@ async def handle_start_auction(
     await manager.broadcast({
         "type": "auction_started",
         "session_id": session_id,
-        "data": state,
+        **payload,
         "timer": manager.get_timer(session_id).to_dict(),
         "timestamp": datetime.utcnow().isoformat(),
     }, session_id)
+    
+    # إذا كان الدور على البوت، نفذ حركته تلقائياً
+    if current_turn == "Goat_Bot" or "bot" in current_turn.lower():
+        asyncio.create_task(manager._execute_bot_turn(session_id))
     
     logger.info(f"🚀 Auction started for session {session_id}")
 
@@ -737,23 +868,27 @@ async def handle_add_bot(
         auction = manager.get_session(session_id)
         state = auction.get_auction_state()
     
+    # بناء حزمة البيانات المتكاملة
+    payload = manager._build_full_payload(session_id, state)
+    
     # بدء المؤقت
     current_turn = state.get("current_turn_player", player_id)
     await manager.start_session_timer(session_id, current_turn)
     
-    # إذا كان الدور على البوت، نفذ حركته
-    if current_turn == bot_id:
-        await manager._execute_bot_turn(session_id)
-    
+    # بث بدء المزاد مع بيانات البوت
     await manager.broadcast({
         "type": "auction_started",
         "session_id": session_id,
-        "bot_name": goat_ai.name,
-        "bot_version": goat_ai.version,
-        "data": state,
+        "bot_name": goat_ai.name if hasattr(goat_ai, 'name') else "Goat_Bot",
+        "bot_version": goat_ai.version if hasattr(goat_ai, 'version') else "1.0",
+        **payload,
         "timer": manager.get_timer(session_id).to_dict(),
         "timestamp": datetime.utcnow().isoformat(),
     }, session_id)
+    
+    # إذا كان الدور على البوت، نفذ حركته
+    if current_turn == bot_id:
+        asyncio.create_task(manager._execute_bot_turn(session_id))
     
     logger.info(f"🤖 Bot Goat joined session {session_id} against {player_id}")
 
@@ -765,7 +900,7 @@ async def handle_place_bid(
     data: dict
 ) -> None:
     """
-    معالج تقديم المزايدة مع استجابة البوت التلقائية
+    معالج تقديم المزايدة مع استجابة البوت التلقائية وتحديث المؤشر
     
     Args:
         websocket: اتصال WebSocket
@@ -797,13 +932,16 @@ async def handle_place_bid(
         # إيقاف المؤقت الحالي
         await manager.stop_session_timer(session_id)
         
+        # بناء حزمة البيانات المتكاملة
+        payload = manager._build_full_payload(session_id, state)
+        
         # بث تأكيد المزايدة
         await manager.broadcast({
             "type": "bid_placed",
             "session_id": session_id,
             "player_id": player_id,
             "amount": amount,
-            "data": state,
+            **payload,
             "timestamp": datetime.utcnow().isoformat(),
         }, session_id)
         
@@ -812,219 +950,12 @@ async def handle_place_bid(
             await manager.broadcast({
                 "type": "auction_completed",
                 "session_id": session_id,
-                "data": state,
+                **manager._build_full_payload(session_id, state),
             }, session_id)
         else:
-            # بدء مؤقت للاعب التالي
-            next_player = state.get("current_turn_player")
-            if next_player:
-                await manager.start_session_timer(session_id, next_player)
-                
-                # إذا كان الدور على البوت
-                if next_player == "Goat_Bot":
-                    await manager._execute_bot_turn(session_id)
+            # التقدم للمركز التالي أو بدء مؤقت اللاعب التالي
+            await manager._advance_to_next_player(session_id, state)
     else:
         await websocket.send_json({
             "type": "bid_failed",
-            "message": state.get("error", "فشلت المزايدة"),
-            "data": state,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
-
-
-async def handle_skip_bid(
-    websocket: WebSocket, 
-    session_id: str, 
-    player_id: str, 
-    data: dict
-) -> None:
-    """
-    معالج تخطي المزايدة
-    
-    Args:
-        websocket: اتصال WebSocket
-        session_id: معرف الجلسة
-        player_id: معرف اللاعب
-        data: بيانات الطلب
-    """
-    auction = manager.get_session(session_id)
-    if not auction:
-        await websocket.send_json({
-            "type": "error",
-            "message": "جلسة المزاد غير موجودة",
-        })
-        return
-    
-    # تخطي المزايدة
-    success, state = auction.skip_bid(player_id)
-    
-    if success:
-        # إيقاف المؤقت الحالي
-        await manager.stop_session_timer(session_id)
-        
-        # بث تأكيد التخطي
-        await manager.broadcast({
-            "type": "turn_skipped",
-            "session_id": session_id,
-            "player_id": player_id,
-            "data": state,
-            "timestamp": datetime.utcnow().isoformat(),
-        }, session_id)
-        
-        # التحقق من اكتمال المزاد
-        if state.get("auction_completed"):
-            await manager.broadcast({
-                "type": "auction_completed",
-                "session_id": session_id,
-                "data": state,
-            }, session_id)
-        else:
-            # بدء مؤقت للاعب التالي
-            next_player = state.get("current_turn_player")
-            if next_player:
-                await manager.start_session_timer(session_id, next_player)
-                
-                # إذا كان الدور على البوت
-                if next_player == "Goat_Bot":
-                    await manager._execute_bot_turn(session_id)
-    else:
-        await websocket.send_json({
-            "type": "skip_failed",
-            "message": state.get("error", "فشل التخطي"),
-            "data": state,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
-
-
-async def handle_start_match(
-    websocket: WebSocket, 
-    session_id: str, 
-    player_id: str, 
-    data: dict
-) -> None:
-    """
-    معالج بدء المباراة والمحاكاة
-    
-    Args:
-        websocket: اتصال WebSocket
-        session_id: معرف الجلسة
-        player_id: معرف اللاعب
-        data: بيانات الطلب
-    """
-    auction = manager.get_session(session_id)
-    if not auction:
-        await websocket.send_json({
-            "type": "error",
-            "message": "جلسة المزاد غير موجودة",
-        })
-        return
-    
-    # إيقاف المؤقت
-    await manager.stop_session_timer(session_id)
-    
-    # إرسال إشعار ببدء المحاكاة
-    await manager.broadcast({
-        "type": "match_starting",
-        "session_id": session_id,
-        "message": "⚽ جاري محاكاة المباراة...",
-        "timestamp": datetime.utcnow().isoformat(),
-    }, session_id)
-    
-    # محاكاة المباراة
-    try:
-        player1_team = auction.player1_team
-        player2_team = auction.player2_team
-        
-        match_engine = MatchEngine(player1_team, player2_team)
-        match_result = match_engine.simulate_match()
-        
-        # بث نتيجة المباراة
-        await manager.broadcast({
-            "type": "match_completed",
-            "session_id": session_id,
-            "data": match_result,
-            "timestamp": datetime.utcnow().isoformat(),
-        }, session_id)
-        
-        logger.info(
-            f"⚽ Match simulated for session {session_id}: "
-            f"{match_result['player1_score']} - {match_result['player2_score']}"
-        )
-        
-    except Exception as e:
-        logger.error(f"❌ Match simulation error: {e}")
-        await manager.broadcast({
-            "type": "error",
-            "message": "حدث خطأ أثناء محاكاة المباراة",
-            "timestamp": datetime.utcnow().isoformat(),
-        }, session_id)
-
-
-async def handle_get_state(
-    websocket: WebSocket, 
-    session_id: str, 
-    player_id: str, 
-    data: dict
-) -> None:
-    """
-    معالج طلب حالة المزاد الحالية
-    
-    Args:
-        websocket: اتصال WebSocket
-        session_id: معرف الجلسة
-        player_id: معرف اللاعب
-        data: بيانات الطلب
-    """
-    auction = manager.get_session(session_id)
-    if not auction:
-        await websocket.send_json({
-            "type": "error",
-            "message": "جلسة المزاد غير موجودة",
-        })
-        return
-    
-    state = auction.get_auction_state()
-    timer = manager.get_timer(session_id)
-    
-    await websocket.send_json({
-        "type": "auction_state",
-        "session_id": session_id,
-        "data": state,
-        "timer": timer.to_dict() if timer else None,
-        "timestamp": datetime.utcnow().isoformat(),
-    })
-
-
-async def handle_check_timer(
-    websocket: WebSocket, 
-    session_id: str, 
-    player_id: str, 
-    data: dict
-) -> None:
-    """
-    معالج التحقق من المؤقت (يستخدم من قبل العميل للمزامنة)
-    
-    Args:
-        websocket: اتصال WebSocket
-        session_id: معرف الجلسة
-        player_id: معرف اللاعب
-        data: بيانات الطلب
-    """
-    timer = manager.get_timer(session_id)
-    
-    if timer:
-        # التحقق من انتهاء المؤقت
-        if timer.is_expired():
-            await manager._handle_timer_expiration(session_id)
-        else:
-            await websocket.send_json({
-                "type": "timer_update",
-                "session_id": session_id,
-                "timer": timer.to_dict(),
-                "timestamp": datetime.utcnow().isoformat(),
-            })
-    else:
-        await websocket.send_json({
-            "type": "timer_update",
-            "session_id": session_id,
-            "timer": None,
+            "message": state
