@@ -802,5 +802,5 @@ class GoatBot:
                 "risk_score": card_valuation.risk_score
             },
             "psychological_state": opponent_profile.psychological_state,
-            "mindset_description": self.mindset
-```
+            "mindset_description": self.mindset_controller.get_mindset_description()
+        }
