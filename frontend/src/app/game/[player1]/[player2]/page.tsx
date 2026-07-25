@@ -13,11 +13,6 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { useGameStore } from '@/store/gameStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import AuctionTimer from '@/components/game/AuctionTimer'
-import AuctionProgress from '@/components/game/AuctionProgress'
-import CommentaryView from '@/components/game/CommentaryView'
-import MatchSimulation from '@/components/game/MatchSimulation'
-import MysteryBoxCard from '@/components/game/MysteryBoxCard'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
 import { AlertCircle, Loader, Play, Trophy, ShieldCheck, Zap, Activity, Cpu, Coins, Wifi, WifiOff, Gift, Users, Bot } from 'lucide-react'
@@ -108,14 +103,12 @@ const FALLBACK_LOAD_DELAY_MS = 2500
 const TIMER_TICK_MS = 250
 const MAX_STUCK_AT_ZERO_MS = 4000
 
-// Mystery Box Probability Configuration
 const MYSTERY_BOX_PROBABILITIES = {
   Weak: 0.40,
   Medium: 0.30,
   Legendary: 0.30
 }
 
-// Match Engine Weights
 const MATCH_WEIGHTS = {
   RATING_WEIGHT: 0.40,
   TACTIC_WEIGHT: 0.30,
@@ -156,9 +149,6 @@ const buildDefaultAuctionState = (sessionId: string, player1Id: string, isBotMat
   } as AuctionState
 }
 
-// ============================================================================
-// MYSTERY BOX GENERATOR
-// ============================================================================
 const generateMysteryBox = (position: string): MysteryBoxCard => {
   const rand = Math.random()
   let rarity: 'Weak' | 'Medium' | 'Legendary'
@@ -172,9 +162,9 @@ const generateMysteryBox = (position: string): MysteryBoxCard => {
   }
 
   const ratings = {
-    Weak: Math.floor(Math.random() * 10) + 70, // 70-79
-    Medium: Math.floor(Math.random() * 10) + 80, // 80-89
-    Legendary: Math.floor(Math.random() * 6) + 90 // 90-95
+    Weak: Math.floor(Math.random() * 10) + 70,
+    Medium: Math.floor(Math.random() * 10) + 80,
+    Legendary: Math.floor(Math.random() * 6) + 90
   }
 
   const mysteryPlayers = {
@@ -197,9 +187,6 @@ const generateMysteryBox = (position: string): MysteryBoxCard => {
   }
 }
 
-// ============================================================================
-// MATCH ENGINE CALCULATOR
-// ============================================================================
 const calculateMatchResult = (
   team1: any[],
   team2: any[],
