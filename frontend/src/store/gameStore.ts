@@ -113,7 +113,7 @@ interface AuctionState {
   acquired_player_ids?: string[]
   is_bot_match?: boolean
   mystery_boxes?: MysteryBoxCard[]
-  last_auction_loser?: string
+  last_auction_loser?: string | null
   match_weights?: {
     rating_weight: number
     tactic_weight: number
