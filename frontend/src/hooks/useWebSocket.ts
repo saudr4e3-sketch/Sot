@@ -1,7 +1,7 @@
 /**
  * ============================================================================
  * OSM FUT Dual Battle - Enterprise WebSocket Hook (Sentinel Engine)
- * Version: 6.0.0 - Auto-Reconnect, Message Buffer, Robust Heartbeat
+ * Version: 7.0.0 - Mystery Box Integration, Match Engine Sync, Enhanced State Management
  * ============================================================================
  *
  * Features:
@@ -13,6 +13,9 @@
  * - Memory leak prevention with proper cleanup
  * - Re-render optimization using refs for mutable state
  * - Connection health monitoring
+ * - Mystery Box and Match Engine message support
+ * - Anti-duplicate player tracking
+ * - Bot mode vs Room PIN separation
  */
 
 'use client'
@@ -30,6 +33,7 @@ interface GameMessage {
   amount?: number
   session_id?: string
   opponent_id?: string
+  room_pin?: string
   error?: string
   message?: string
   timestamp?: number | string
@@ -47,6 +51,23 @@ interface GameMessage {
   bot_strategy?: string
   winner_id?: string
   commentary?: any[]
+  auction_state?: any
+  opponent_info?: any
+  match_result?: any
+  match_weights?: {
+    rating_weight: number
+    tactic_weight: number
+    momentum_weight: number
+  }
+  mystery_box?: {
+    id: string
+    name: string
+    position: string
+    rating: number
+    rarity: 'Weak' | 'Medium' | 'Legendary'
+  }
+  acquired_player_ids?: string[]
+  auction_sequence?: string[]
   [key: string]: any
 }
 
@@ -81,6 +102,18 @@ const MESSAGE_BUFFER_MAX_SIZE = 50
 const HEALTH_CHECK_WINDOW_MS = 60000
 const MAX_MISSED_HEARTBEATS = 3
 
+// ==================== AUCTION SEQUENCE ====================
+
+const DEFAULT_AUCTION_SEQUENCE = ['GK', 'DEF', 'DEF', 'MID', 'MID', 'MID', 'ATT', 'ATT', 'MGR']
+
+// ==================== MATCH WEIGHTS ====================
+
+const DEFAULT_MATCH_WEIGHTS = {
+  rating_weight: 0.40,
+  tactic_weight: 0.30,
+  momentum_weight: 0.30
+}
+
 // ==================== HOOK IMPLEMENTATION ====================
 
 export const useWebSocket = ({
@@ -114,6 +147,8 @@ export const useWebSocket = ({
   const lastSuccessfulMessageRef = useRef<number>(Date.now())
   const messageBufferRef = useRef<GameMessage[]>([])
   const isReconnectingRef = useRef<boolean>(false)
+  const pendingBidsRef = useRef<Map<string, { amount: number; timestamp: number }>>(new Map())
+  const acquiredPlayerIdsRef = useRef<Set<string>>(new Set())
 
   // Keep callback refs updated
   onMessageRef.current = onMessage
@@ -149,6 +184,41 @@ export const useWebSocket = ({
       }
     })
   }, [])
+
+  // ===== Resend Pending Bids =====
+  const resendPendingBids = useCallback(() => {
+    if (pendingBidsRef.current.size === 0) return
+    console.log(`[WebSocket] Resending ${pendingBidsRef.current.size} pending bids`)
+    
+    pendingBidsRef.current.forEach((bidData, bidKey) => {
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        try {
+          const payload = JSON.stringify({
+            type: 'place_bid',
+            action: 'place_bid',
+            session_id: sessionId,
+            player_id: playerId,
+            amount: bidData.amount,
+            timestamp: Date.now(),
+            is_retry: true,
+            original_timestamp: bidData.timestamp
+          })
+          socketRef.current.send(payload)
+          console.log(`[WebSocket] Resent bid: ${bidData.amount}M`)
+        } catch (sendError) {
+          console.error('[WebSocket] Failed to resend bid:', sendError)
+        }
+      }
+    })
+    
+    // Clear old pending bids (older than 30 seconds)
+    const now = Date.now()
+    pendingBidsRef.current.forEach((bidData, bidKey) => {
+      if (now - bidData.timestamp > 30000) {
+        pendingBidsRef.current.delete(bidKey)
+      }
+    })
+  }, [sessionId, playerId])
 
   // ===== Cleanup All Timers =====
   const clearAllTimers = useCallback(() => {
@@ -283,6 +353,43 @@ export const useWebSocket = ({
     }
   }, [])
 
+  // ===== Process Message for Duplicate Prevention =====
+  const processMessageForDuplicates = useCallback((message: GameMessage): GameMessage => {
+    // Track acquired player IDs to prevent duplicates
+    if (message.acquired_player_ids && Array.isArray(message.acquired_player_ids)) {
+      message.acquired_player_ids.forEach((id: string) => {
+        acquiredPlayerIdsRef.current.add(id)
+      })
+    }
+
+    // If auction state has current_player, check for duplicates
+    if (message.auction_state?.current_player?.card_id) {
+      const cardId = message.auction_state.current_player.card_id
+      if (acquiredPlayerIdsRef.current.has(cardId)) {
+        console.warn(`[WebSocket] Duplicate player detected: ${cardId} - Requesting new player`)
+        // Send request for new unique player
+        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+          try {
+            socketRef.current.send(JSON.stringify({
+              type: 'request_new_player',
+              action: 'request_new_player',
+              session_id: sessionId,
+              player_id: playerId,
+              position: message.auction_state.current_position,
+              exclude_ids: Array.from(acquiredPlayerIdsRef.current)
+            }))
+          } catch (sendError) {
+            console.error('[WebSocket] Failed to request new player:', sendError)
+          }
+        }
+      } else if (cardId) {
+        acquiredPlayerIdsRef.current.add(cardId)
+      }
+    }
+
+    return message
+  }, [sessionId, playerId])
+
   // ===== Connect WebSocket =====
   const connectSocket = useCallback(() => {
     if (!isMountedRef.current) return
@@ -355,6 +462,9 @@ export const useWebSocket = ({
       startHeartbeat()
       onConnectRef.current?.()
 
+      // Resend any pending bids
+      resendPendingBids()
+
       // Flush any buffered messages from reconnection period
       flushMessageBuffer()
     }
@@ -363,8 +473,11 @@ export const useWebSocket = ({
     ws.onmessage = (event: MessageEvent) => {
       if (!isMountedRef.current) return
 
-      const parsedMessage = parseIncomingMessage(event)
+      let parsedMessage = parseIncomingMessage(event)
       if (!parsedMessage) return
+
+      // Process for duplicate prevention
+      parsedMessage = processMessageForDuplicates(parsedMessage)
 
       lastSuccessfulMessageRef.current = Date.now()
       missedHeartbeatsRef.current = 0
@@ -379,9 +492,62 @@ export const useWebSocket = ({
         return
       }
 
+      // Handle bid confirmation - remove from pending
+      if (parsedMessage.type === 'bid_confirmed' || parsedMessage.type === 'bid_placed') {
+        const bidKey = `${parsedMessage.player_id}_${parsedMessage.amount}`
+        pendingBidsRef.current.delete(bidKey)
+      }
+
+      // Handle bid rejection
+      if (parsedMessage.type === 'bid_rejected') {
+        const bidKey = `${playerId}_${parsedMessage.amount}`
+        pendingBidsRef.current.delete(bidKey)
+        console.warn('[WebSocket] Bid rejected:', parsedMessage.reason)
+      }
+
+      // Handle match result with mystery box
+      if (parsedMessage.type === 'match_result' || parsedMessage.type === 'match_completed') {
+        if (parsedMessage.data?.mystery_boxes) {
+          console.log('[WebSocket] Mystery boxes awarded:', parsedMessage.data.mystery_boxes)
+        }
+        // Apply match weights if present
+        if (!parsedMessage.data?.match_weights) {
+          parsedMessage.data = {
+            ...parsedMessage.data,
+            match_weights: DEFAULT_MATCH_WEIGHTS
+          }
+        }
+      }
+
+      // Handle auction state updates with anti-duplicate
+      if (parsedMessage.auction_state) {
+        // Ensure auction sequence is enforced
+        if (!parsedMessage.auction_state.auction_sequence || 
+            parsedMessage.auction_state.auction_sequence.length === 0) {
+          parsedMessage.auction_state.auction_sequence = [...DEFAULT_AUCTION_SEQUENCE]
+        }
+        
+        // Ensure match weights are set
+        if (!parsedMessage.auction_state.match_weights) {
+          parsedMessage.auction_state.match_weights = DEFAULT_MATCH_WEIGHTS
+        }
+        
+        // Track acquired players
+        if (parsedMessage.auction_state.acquired_player_ids) {
+          parsedMessage.auction_state.acquired_player_ids.forEach((id: string) => {
+            acquiredPlayerIdsRef.current.add(id)
+          })
+        }
+      }
+
       // Handle error messages
       if (parsedMessage.type === 'error') {
         setError(parsedMessage.message || parsedMessage.error || 'Unknown server error')
+      }
+
+      // Handle new player request response
+      if (parsedMessage.type === 'new_player_assigned') {
+        console.log('[WebSocket] New unique player assigned:', parsedMessage.data?.name)
       }
 
       // If currently reconnecting, buffer the message
@@ -427,7 +593,7 @@ export const useWebSocket = ({
         scheduleReconnect()
       }
     }
-  }, [sessionId, playerId, buildWebSocketUrl, clearAllTimers, startHeartbeat, parseIncomingMessage, flushMessageBuffer, updateConnectionHealth])
+  }, [sessionId, playerId, buildWebSocketUrl, clearAllTimers, startHeartbeat, parseIncomingMessage, flushMessageBuffer, updateConnectionHealth, processMessageForDuplicates, resendPendingBids])
 
   // ===== Schedule Reconnection with Exponential Backoff + Jitter =====
   const scheduleReconnect = useCallback(() => {
@@ -468,28 +634,66 @@ export const useWebSocket = ({
     connectSocket()
   }, [closeSocket, connectSocket])
 
-  // ===== Send Message with Buffer Support =====
+  // ===== Send Message with Buffer and Duplicate Prevention =====
   const send = useCallback((message: Partial<GameMessage>) => {
+    // Add auction sequence and match weights to relevant messages
+    if (message.type === 'init_bot_match' || message.type === 'start_auction') {
+      message.auction_sequence = DEFAULT_AUCTION_SEQUENCE
+      message.match_weights = DEFAULT_MATCH_WEIGHTS
+    }
+    
+    // Add excluded player IDs for duplicate prevention
+    if (message.type === 'request_new_player' || message.type === 'start_auction') {
+      message.exclude_ids = Array.from(acquiredPlayerIdsRef.current)
+    }
+    
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       try {
         const payload: string = JSON.stringify(message)
         socketRef.current.send(payload)
         lastSuccessfulMessageRef.current = Date.now()
+        
+        // Track pending bids
+        if (message.type === 'place_bid' && message.amount) {
+          const bidKey = `${playerId}_${message.amount}`
+          pendingBidsRef.current.set(bidKey, {
+            amount: message.amount,
+            timestamp: Date.now()
+          })
+        }
       } catch (sendError) {
         console.error('[WebSocket] Send failed:', sendError)
         setError('Failed to send message')
+        
+        // Buffer failed bid for retry
+        if (message.type === 'place_bid' && message.amount) {
+          const bidKey = `${playerId}_${message.amount}`
+          pendingBidsRef.current.set(bidKey, {
+            amount: message.amount,
+            timestamp: Date.now()
+          })
+        }
       }
     } else {
       console.warn('[WebSocket] Cannot send - socket not open. ReadyState:', socketRef.current?.readyState)
       // Buffer important messages for reconnection
-      if (message.type && ['place_bid', 'skip_bid', 'start_match'].includes(message.type)) {
+      if (message.type && ['place_bid', 'skip_bid', 'start_match', 'init_bot_match', 'join_room'].includes(message.type)) {
         if (messageBufferRef.current.length < MESSAGE_BUFFER_MAX_SIZE) {
           messageBufferRef.current.push(message as GameMessage)
           console.log('[WebSocket] Message buffered for reconnection')
         }
+        
+        // Track pending bids even when offline
+        if (message.type === 'place_bid' && message.amount) {
+          const bidKey = `${playerId}_${message.amount}`
+          pendingBidsRef.current.set(bidKey, {
+            amount: message.amount,
+            timestamp: Date.now()
+          })
+        }
       }
     }
-  }, [])
+  }, [playerId])
 
   // ===== Main Effect: Connect on Mount, Cleanup on Unmount =====
   useEffect(() => {
@@ -498,6 +702,8 @@ export const useWebSocket = ({
     reconnectAttemptsRef.current = 0
     currentReconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS
     messageBufferRef.current = []
+    pendingBidsRef.current = new Map()
+    acquiredPlayerIdsRef.current = new Set()
 
     connectSocket()
 
@@ -513,6 +719,8 @@ export const useWebSocket = ({
       closeSocket()
       clearAllTimers()
       messageBufferRef.current = []
+      pendingBidsRef.current.clear()
+      acquiredPlayerIdsRef.current.clear()
     }
   }, [sessionId, playerId])
 
