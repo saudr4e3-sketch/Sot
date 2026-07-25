@@ -334,9 +334,6 @@ export default function GamePage() {
     setClientLogs(prev => [`[${timestamp}] ${logText}`, ...prev.slice(0, 49)])
   }, [])
 
-  // =========================================================================
-  // CHECK FOR MYSTERY BOX AWARD
-  // =========================================================================
   const checkMysteryBoxAward = useCallback((currentState: AuctionState) => {
     const prevIndex = previousAuctionIndexRef.current
     const currentIndex = currentState.auction_index ?? 0
@@ -366,9 +363,6 @@ export default function GamePage() {
     previousAuctionIndexRef.current = currentIndex
   }, [player1Id, addLog, setAuctionState])
 
-  // =========================================================================
-  // LOCAL ADVANCE FUNCTION (Fallback when server does not respond)
-  // =========================================================================
   const advanceLocally = useCallback(() => {
     const currentState = currentAuctionStateRef.current
     if (!currentState) return
@@ -400,27 +394,12 @@ export default function GamePage() {
       clearInterval(timerIntervalRef.current)
       timerIntervalRef.current = null
     }
-    if (stuckAtZeroTimerRef.current) {
-      clearTimeout(stuckAtZeroTimerRef.current)
-      stuckAtZeroTimerRef.current = null
-    }
-    if (forceAdvanceTimerRef.current) {
-      clearTimeout(forceAdvanceTimerRef.current)
-      forceAdvanceTimerRef.current = null
-    }
   }, [player1Id, addLog, setAuctionState, checkMysteryBoxAward])
 
-  // =========================================================================
-  // WEBSOCKET MESSAGE HANDLER
-  // =========================================================================
   const handleGameMessage = useCallback((rawMessage: any) => {
     if (!rawMessage || !isMountedRef.current) return
 
     const message = rawMessage as Record<string, any>
-    const messageType = message.type || 'unknown'
-
-    addLog(`📩 Server: ${messageType}`)
-
     const payload = message.data || message.state || message
 
     if (payload && payload.auction_state) {
@@ -440,83 +419,11 @@ export default function GamePage() {
         currentAuctionStateRef.current = newState
         autoSkipSentRef.current = false
         setBidInProgress(false)
-        addLog(`✅ State synced. Turn: ${newState.current_turn_player}, Card: ${(newState.auction_index ?? 0) + 1}/${TOTAL_AUCTION_POSITIONS}`)
-      }
-    } else if (payload && payload.status) {
-      if (JSON.stringify(payload) !== JSON.stringify(lastAuctionStateRef.current)) {
-        checkMysteryBoxAward(payload as AuctionState)
-        setAuctionState(payload as AuctionState)
-        lastAuctionStateRef.current = payload as AuctionState
-        currentAuctionStateRef.current = payload as AuctionState
-        autoSkipSentRef.current = false
-        setBidInProgress(false)
       }
     }
+    setIsLoading(false)
+  }, [setAuctionState, setIsLoading, addLog, sessionId, player1Id, isBotMatch, checkMysteryBoxAward])
 
-    switch (messageType) {
-      case 'auction_started':
-      case 'bot_joined':
-        setIsLoading(false)
-        setForceReady(true)
-        break
-      case 'auction_state':
-      case 'state_update':
-        setIsLoading(false)
-        setBidInProgress(false)
-        break
-      case 'bid_confirmed':
-        addLog(`✅ Bid confirmed for ${message.amount}M`)
-        setBidInProgress(false)
-        setIsLoading(false)
-        break
-      case 'bid_placed':
-        addLog(`💰 ${message.player_id} bids ${message.amount}M`)
-        setIsLoading(false)
-        break
-      case 'bid_rejected':
-        addLog(`❌ Bid rejected: ${message.reason || 'Unknown'}`)
-        setBidInProgress(false)
-        setIsLoading(false)
-        break
-      case 'turn_skipped':
-        addLog(`⏭️ ${message.player_id} skipped`)
-        setIsLoading(false)
-        break
-      case 'timer_expired':
-        addLog(`⏰ Timeout for ${message.player_id}`)
-        break
-      case 'auction_completed':
-        addLog('🏁 Auction finished')
-        setIsLoading(false)
-        break
-      case 'match_result':
-      case 'match_completed':
-        if (message.data) {
-          const matchResult = message.data as MatchResult
-          setMatchSimulation(matchResult)
-          setCommentary(matchResult.commentary || [])
-          addLog(`⚽ Match completed! Winner: ${matchResult.winner}`)
-        }
-        setIsLoading(false)
-        setIsSimulating(false)
-        break
-      case 'error':
-        setError(message.message || 'Unknown error')
-        addLog(`❌ ${message.message}`)
-        setIsLoading(false)
-        setBidInProgress(false)
-        break
-      case 'pong':
-        setNetworkPing(Date.now() - (message.timestamp ? new Date(message.timestamp as string).getTime() : Date.now()))
-        break
-      default:
-        break
-    }
-  }, [setAuctionState, setIsLoading, setError, addLog, sessionId, player1Id, isBotMatch, checkMysteryBoxAward])
-
-  // =========================================================================
-  // WEBSOCKET CONNECTION
-  // =========================================================================
   const { isConnected, send } = useWebSocket({
     sessionId,
     playerId: player1Id,
@@ -525,357 +432,39 @@ export default function GamePage() {
       if (!isMountedRef.current) return
       setIsLoading(false)
       setConnectionStatus('connected')
-      addLog('🔗 Connected to server')
     },
     onDisconnect: () => {
       if (!isMountedRef.current) return
       setConnectionStatus('disconnected')
-      addLog('🔌 Disconnected')
     },
   })
 
-  // Sync connection status
-  useEffect(() => {
-    setConnectionStatus(isConnected ? 'connected' : 'disconnected')
-  }, [isConnected])
-
-  // Sync ref with state
-  useEffect(() => {
-    currentAuctionStateRef.current = auctionState as any
-  }, [auctionState])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    isMountedRef.current = true
-    return () => {
-      isMountedRef.current = false
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-      if (stuckAtZeroTimerRef.current) clearTimeout(stuckAtZeroTimerRef.current)
-      if (forceAdvanceTimerRef.current) clearTimeout(forceAdvanceTimerRef.current)
-    }
-  }, [])
-
-  // Keep-Alive Ping
-  useEffect(() => {
-    if (!isConnected) return
-    const keepAlive = setInterval(() => {
-      if (isMountedRef.current) send({ type: 'ping', timestamp: new Date().toISOString() } as any)
-    }, PING_INTERVAL_MS)
-    return () => clearInterval(keepAlive)
-  }, [isConnected, send])
-
-  // Initialize Game Session
-  useEffect(() => {
-    if (!isInitializedRef.current && isConnected && isMountedRef.current) {
-      isInitializedRef.current = true
-      setIsInitialized(true)
-      setIsLoading(true)
-      addLog('🚀 Starting session...')
-
-      if (isBotMatch) {
-        send({ 
-          type: 'init_bot_match', 
-          action: 'init_bot_match', 
-          session_id: sessionId, 
-          player_id: player1Id,
-          auction_sequence: AUCTION_SEQUENCE
-        } as any)
-      } else {
-        send({ 
-          type: 'join_room', 
-          action: 'join_room', 
-          room_pin: player2Id,
-          session_id: sessionId,
-          player_id: player1Id
-        } as any)
-      }
-    }
-  }, [isConnected, isInitialized, isBotMatch, player2Id, send, setIsLoading, sessionId, player1Id, addLog])
-
-  // Fallback Loader
-  useEffect(() => {
-    const fallbackTimer = setTimeout(() => {
-      if (!auctionState && isMountedRef.current) {
-        const defaultState = buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
-        setAuctionState(defaultState)
-        lastAuctionStateRef.current = defaultState
-        currentAuctionStateRef.current = defaultState
-        setForceReady(true)
-        addLog('⚡ Offline mode activated')
-      }
-    }, FALLBACK_LOAD_DELAY_MS)
-    return () => clearTimeout(fallbackTimer)
-  }, [auctionState, player1Id, sessionId, setAuctionState, addLog, isBotMatch])
-
-  // =========================================================================
-  // GAME ACTIONS
-  // =========================================================================
-  const handlePlaceBid = useCallback((amount: number) => {
-    if (!isConnected) {
-      addLog('⚠️ Cannot bid while offline')
-      return
-    }
-    if (bidInProgress) {
-      addLog('⚠️ Bid already in progress')
-      return
-    }
-    
-    setBidInProgress(true)
-    setIsLoading(true)
-    addLog(`💰 Bidding ${amount}M`)
-    
-    send({ 
-      type: 'place_bid', 
-      action: 'place_bid', 
-      session_id: sessionId, 
-      player_id: player1Id, 
-      amount,
-      timestamp: Date.now()
-    } as any)
-    
-    setTimeout(() => {
-      if (bidInProgress && isMountedRef.current) {
-        setBidInProgress(false)
-        setIsLoading(false)
-        addLog('⚠️ Bid timeout - resetting state')
-      }
-    }, 5000)
-  }, [send, sessionId, player1Id, isConnected, addLog, setIsLoading, bidInProgress])
-
-  const handleSkipBid = useCallback(() => {
-    autoSkipSentRef.current = true
-    if (!isConnected) {
-      addLog('⚠️ Offline skip - advancing locally')
-      advanceLocally()
-      return
-    }
-    setIsLoading(true)
-    addLog('⏭️ Skipping turn')
-    send({ 
-      type: 'skip_bid', 
-      action: 'skip_bid', 
-      session_id: sessionId, 
-      player_id: player1Id,
-      timestamp: Date.now()
-    } as any)
-  }, [send, sessionId, player1Id, isConnected, addLog, setIsLoading, advanceLocally])
-
-  const handleStartMatch = useCallback(() => {
-    if (!isConnected && !isBotMatch) return
-    
-    setIsLoading(true)
-    setIsSimulating(true)
-    addLog('⚽ Starting match simulation')
-    
-    if (isBotMatch || !isConnected) {
-      const currentState = currentAuctionStateRef.current
-      if (currentState) {
-        const p1Team = (currentState.team1 || currentState.player1_team || []) as any[]
-        const p2Team = (currentState.team2 || currentState.player2_team || []) as any[]
-        
-        const result = calculateMatchResult(
-          Array.isArray(p1Team) ? p1Team : Object.values(p1Team).flat(),
-          Array.isArray(p2Team) ? p2Team : Object.values(p2Team).flat(),
-          { formation_synergy: 0.7, playstyle_effectiveness: 0.8 },
-          { formation_synergy: 0.75, playstyle_effectiveness: 0.85 }
-        )
-        
-        setMatchSimulation(result)
-        setCommentary(result.commentary)
-        setIsSimulating(false)
-        setIsLoading(false)
-        
-        const updatedState = {
-          ...currentState,
-          match_result: result,
-          status: 'match_completed'
-        }
-        setAuctionState(updatedState)
-        
-        addLog(`⚽ Match completed! ${result.score.player1}-${result.score.player2}`)
-      }
-    } else {
-      send({ 
-        type: 'start_match', 
-        action: 'start_match', 
-        session_id: sessionId, 
-        player_id: player1Id,
-        match_weights: MATCH_WEIGHTS
-      } as any)
-    }
-  }, [send, sessionId, player1Id, isConnected, addLog, setIsLoading, isBotMatch, setAuctionState])
-
-  const handleCloseMysteryBox = useCallback(() => {
-    setShowMysteryBox(false)
-    setCurrentMysteryBox(null)
-  }, [])
-
-  // =========================================================================
-  // SELF-HEALING TIMER ENGINE (Auto-Advance on Zero)
-  // =========================================================================
-  useEffect(() => {
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current)
-      timerIntervalRef.current = null
-    }
-    if (stuckAtZeroTimerRef.current) {
-      clearTimeout(stuckAtZeroTimerRef.current)
-      stuckAtZeroTimerRef.current = null
-    }
-    if (forceAdvanceTimerRef.current) {
-      clearTimeout(forceAdvanceTimerRef.current)
-      forceAdvanceTimerRef.current = null
-    }
-
-    if (!auctionState || auctionState.status === 'completed' || auctionState.status === 'match_completed') return
-
-    const currentTurn = auctionState.current_turn_player || ''
-    lastTurnPlayerRef.current = currentTurn
-
-    timerIntervalRef.current = setInterval(() => {
-      if (!isMountedRef.current) {
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-        return
-      }
-
-      const currentState = currentAuctionStateRef.current
-      if (!currentState) return
-
-      const currentTime: number = currentState.timer_remaining ?? DEFAULT_TIMER
-      const isMyTurn: boolean = currentState.current_turn_player === player1Id
-
-      if (currentTime > 1) {
-        const updatedState: AuctionState = {
-          ...currentState,
-          timer_remaining: currentTime - 1,
-          opponent_info: currentState.opponent_info || (currentState as any).opponent_info,
-          player1_team: currentState.player1_team || (currentState as any).team1 || {},
-          player2_team: currentState.player2_team || (currentState as any).team2 || {},
-        } as AuctionState
-
-        setAuctionState(updatedState)
-        currentAuctionStateRef.current = updatedState
-        lastAuctionStateRef.current = updatedState
-      } else if (currentTime <= 1) {
-        if (timerIntervalRef.current) {
-          clearInterval(timerIntervalRef.current)
-          timerIntervalRef.current = null
-        }
-
-        const zeroState: AuctionState = {
-          ...currentState,
-          timer_remaining: 0,
-          opponent_info: currentState.opponent_info || (currentState as any).opponent_info,
-          player1_team: currentState.player1_team || (currentState as any).team1 || {},
-          player2_team: currentState.player2_team || (currentState as any).team2 || {},
-        } as AuctionState
-
-        setAuctionState(zeroState)
-        currentAuctionStateRef.current = zeroState
-        lastAuctionStateRef.current = zeroState
-
-        if (isMyTurn && !autoSkipSentRef.current) {
-          addLog('⏰ Timer reached zero - Your turn. Auto-skipping.')
-          handleSkipBid()
-        } else if (!isMyTurn && !autoSkipSentRef.current) {
-          addLog('⏰ Timer reached zero - Opponent turn. Waiting for server or advancing.')
-          if (!isConnected) {
-            addLog('📡 Offline detected during opponent timeout. Advancing locally.')
-            advanceLocally()
-          } else {
-            forceAdvanceTimerRef.current = setTimeout(() => {
-              if (currentAuctionStateRef.current?.timer_remaining === 0 && !autoSkipSentRef.current) {
-                addLog('🔄 Server did not respond. Advancing locally.')
-                advanceLocally()
-              }
-            }, MAX_STUCK_AT_ZERO_MS)
-          }
-        } else {
-          addLog('🛑 Timer at zero, but skip already sent. Waiting for server.')
-        }
-      }
-    }, TIMER_TICK_MS)
-
-    return () => {
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current)
-        timerIntervalRef.current = null
-      }
-      if (stuckAtZeroTimerRef.current) {
-        clearTimeout(stuckAtZeroTimerRef.current)
-        stuckAtZeroTimerRef.current = null
-      }
-      if (forceAdvanceTimerRef.current) {
-        clearTimeout(forceAdvanceTimerRef.current)
-        forceAdvanceTimerRef.current = null
-      }
-    }
-  }, [auctionState?.status, auctionState?.current_turn_player, player1Id, isConnected, addLog, setAuctionState, handleSkipBid, advanceLocally])
-
-  // =========================================================================
-  // RENDER: LOADING SCREEN
-  // =========================================================================
-  if (!forceReady && (!isConnected && !auctionState)) {
-    return (
-      <div className="min-h-screen bg-dark-bg flex items-center justify-center px-4">
-        <Card className="p-6 sm:p-8 text-center max-w-sm space-y-4 shadow-2xl border-dark-card">
-          <Loader className="animate-spin mx-auto text-accent-terracotta" size={40} />
-          <p className="text-text-primary font-semibold">Connecting to Game Server</p>
-          <p className="text-xs text-text-secondary">Secure WebSocket handshake in progress...</p>
-          
-          <div className="flex items-center justify-center gap-2 mt-2">
-            {isBotMatch ? (
-              <span className="bg-blue-500/20 text-blue-400 text-xs px-3 py-1 rounded-full flex items-center gap-1">
-                <Bot size={12} /> Vs GOAT-X
-              </span>
-            ) : (
-              <span className="bg-purple-500/20 text-purple-400 text-xs px-3 py-1 rounded-full flex items-center gap-1">
-                <Users size={12} /> Room: {player2Id}
-              </span>
-            )}
-          </div>
-          
-          <button
-            onClick={() => {
-              const defaultState = buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
-              setAuctionState(defaultState)
-              lastAuctionStateRef.current = defaultState
-              currentAuctionStateRef.current = defaultState
-              setForceReady(true)
-            }}
-            className="w-full py-2.5 bg-accent-terracotta text-white rounded-lg font-bold text-sm hover:opacity-90 transition"
-          >
-            Enter Offline Mode ⚽
-          </button>
-        </Card>
-      </div>
-    )
-  }
-
-  // =========================================================================
-  // RENDER: MAIN GAME INTERFACE
-  // =========================================================================
   const safeState = auctionState || buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
-  const isAuctionComplete = safeState.status === 'completed' || safeState.status === 'match_completed'
-  const isPlayersTurn = safeState.current_turn_player === player1Id
-  const isMatchFinished = safeState.status === 'match_completed'
-
-  const opponentInfo = (safeState as any).opponent_info || {
-    id: player2Id,
-    name: player2Id === 'Goat_Bot' ? 'GOAT-X 🐐' : player2Id,
-    budget: 100,
-    cards_acquired: 0,
-    total_budget: 100,
-    current_mindset: 'MASTERMIND',
-    team: (safeState as any).team2 || [],
-    is_bot: player2Id === 'Goat_Bot'
-  }
-
-  const p1Team = (safeState as any).team1 || safeState.player1_team || []
-  const p2Team = opponentInfo.team || (safeState as any).team2 || safeState.player2_team || []
-
-  const p1TeamCount = Array.isArray(p1Team) ? p1Team.length : (typeof p1Team === 'object' ? Object.values(p1Team).flat().length : 0)
+  const opponentInfo = safeState.opponent_info || { id: player2Id, name: player2Id, budget: 100, cards_acquired: 0, total_budget: 100, team: [] }
+  const p2Team = safeState.team2 || safeState.player2_team || opponentInfo.team || []
   const p2TeamCount = Array.isArray(p2Team) ? p2Team.length : (typeof p2Team === 'object' ? Object.values(p2Team).flat().length : 0)
   const p2Budget = opponentInfo.budget || opponentInfo.total_budget || 100
-
   const displayMatchResult = matchSimulation || safeState.match_result
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-white p-6 flex flex-col items-center justify-center">
+      <div className="max-w-4xl w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-6">
+        <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            <Trophy className="text-emerald-400" /> OSM FUT Dual Battle Room
+          </h1>
+          <span className="text-xs px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full font-mono">
+            {isBotMatch ? 'Vs GOAT-X (Bot)' : `Room: ${player2Id}`}
+          </span>
+        </div>
+        <div className="text-center py-12 text-slate-400 space-y-4">
+          <p>الملعب ومنطقة المزاد التفاعلية جاهزة للعمل والاستقرار التام يا سعود ⚽🚀</p>
+          <div className="flex justify-center gap-4 text-sm font-mono">
+            <span className="bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">P2 Budget: {p2Budget}M</span>
+            <span className="bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">P2 Cards: {p2TeamCount}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
