@@ -108,14 +108,12 @@ const FALLBACK_LOAD_DELAY_MS = 2500
 const TIMER_TICK_MS = 250
 const MAX_STUCK_AT_ZERO_MS = 4000
 
-// Mystery Box Probability Configuration
 const MYSTERY_BOX_PROBABILITIES = {
   Weak: 0.40,
   Medium: 0.30,
   Legendary: 0.30
 }
 
-// Match Engine Weights
 const MATCH_WEIGHTS = {
   RATING_WEIGHT: 0.40,
   TACTIC_WEIGHT: 0.30,
@@ -156,9 +154,6 @@ const buildDefaultAuctionState = (sessionId: string, player1Id: string, isBotMat
   } as AuctionState
 }
 
-// ============================================================================
-// MYSTERY BOX GENERATOR
-// ============================================================================
 const generateMysteryBox = (position: string): MysteryBoxCard => {
   const rand = Math.random()
   let rarity: 'Weak' | 'Medium' | 'Legendary'
@@ -197,9 +192,6 @@ const generateMysteryBox = (position: string): MysteryBoxCard => {
   }
 }
 
-// ============================================================================
-// MATCH ENGINE CALCULATOR
-// ============================================================================
 const calculateMatchResult = (
   team1: any[],
   team2: any[],
@@ -440,31 +432,164 @@ export default function GamePage() {
   })
 
   const safeState = auctionState || buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
-  const opponentInfo = safeState.opponent_info || { id: player2Id, name: player2Id, budget: 100, cards_acquired: 0, total_budget: 100, team: [] }
-  const p2Team = safeState.team2 || safeState.player2_team || opponentInfo.team || []
+  const isAuctionComplete = safeState.status === 'completed' || safeState.status === 'match_completed'
+  const isPlayersTurn = safeState.current_turn_player === player1Id
+  const isMatchFinished = safeState.status === 'match_completed'
+
+  const opponentInfo = (safeState as any).opponent_info || {
+    id: player2Id,
+    name: player2Id === 'Goat_Bot' ? 'GOAT-X 🐐' : player2Id,
+    budget: 100,
+    cards_acquired: 0,
+    total_budget: 100,
+    current_mindset: 'MASTERMIND',
+    team: (safeState as any).team2 || [],
+    is_bot: player2Id === 'Goat_Bot'
+  }
+
+  const p1Team = (safeState as any).team1 || safeState.player1_team || []
+  const p2Team = opponentInfo.team || (safeState as any).team2 || safeState.player2_team || []
+
+  const p1TeamCount = Array.isArray(p1Team) ? p1Team.length : (typeof p1Team === 'object' ? Object.values(p1Team).flat().length : 0)
   const p2TeamCount = Array.isArray(p2Team) ? p2Team.length : (typeof p2Team === 'object' ? Object.values(p2Team).flat().length : 0)
   const p2Budget = opponentInfo.budget || opponentInfo.total_budget || 100
+
   const displayMatchResult = matchSimulation || safeState.match_result
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-6 flex flex-col items-center justify-center">
-      <div className="max-w-4xl w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-6">
-        <div className="flex justify-between items-center border-b border-slate-800 pb-4">
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <Trophy className="text-emerald-400" /> OSM FUT Dual Battle Room
-          </h1>
-          <span className="text-xs px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full font-mono">
-            {isBotMatch ? 'Vs GOAT-X (Bot)' : `Room: ${player2Id}`}
-          </span>
-        </div>
-        <div className="text-center py-12 text-slate-400 space-y-4">
-          <p>الملعب ومنطقة المزاد التفاعلية جاهزة للعمل والاستقرار التام يا سعود ⚽🚀</p>
-          <div className="flex justify-center gap-4 text-sm font-mono">
-            <span className="bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">P2 Budget: {p2Budget}M</span>
-            <span className="bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">P2 Cards: {p2TeamCount}</span>
+    <div className="min-h-screen bg-slate-950 text-white p-4 sm:p-6 flex flex-col items-center justify-center">
+      <div className="max-w-5xl w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-6">
+        
+        {/* HEADER BAR */}
+        <div className="flex flex-col sm:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-emerald-500/10 rounded-xl text-emerald-400 border border-emerald-500/20">
+              <Trophy size={24} />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">OSM FUT Dual Battle</h1>
+              <p className="text-xs text-slate-400">Manager: <span className="text-white font-semibold">{player1Id}</span></p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <span className="text-xs px-3 py-1.5 bg-emerald-500/20 text-emerald-400 rounded-xl font-mono border border-emerald-500/30 flex items-center gap-1.5">
+              {isBotMatch ? <Bot size={14} /> : <Users size={14} />}
+              {isBotMatch ? 'Vs GOAT-X (Bot)' : `Room: ${player2Id}`}
+            </span>
+            <span className={`text-xs px-3 py-1.5 rounded-xl font-mono flex items-center gap-1.5 border ${isConnected ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
+              {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
+              {isConnected ? 'Connected' : 'Offline'}
+            </span>
           </div>
         </div>
+
+        {/* AUCTION & BATTLE ARENA */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          
+          {/* PLAYER 1 STATS */}
+          <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 space-y-3">
+            <h3 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
+              <ShieldCheck size={16} /> {player1Id}
+            </h3>
+            <div className="flex justify-between text-xs text-slate-300">
+              <span>Budget: <strong className="text-emerald-400">{safeState.player1_budget ?? 100}M</strong></span>
+              <span>Cards: <strong className="text-white">{p1TeamCount}/9</strong></span>
+            </div>
+          </div>
+
+          {/* CENTRAL AUCTION / MATCH HUB */}
+          <div className="bg-slate-950/80 p-6 rounded-2xl border border-slate-800 text-center space-y-4 flex flex-col justify-center items-center">
+            <span className="text-xs font-mono text-slate-400 bg-slate-900 px-3 py-1 rounded-full border border-slate-800">
+              Position: {safeState.current_position || 'GK'} ({ (safeState.auction_index ?? 0) + 1 } / 9)
+            </span>
+
+            {safeState.current_player ? (
+              <div className="space-y-1">
+                <h4 className="text-lg font-bold text-white">{safeState.current_player.name}</h4>
+                <p className="text-xs text-emerald-400 font-bold">Rating: {safeState.current_player.rating}</p>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">Waiting for next player card...</p>
+            )}
+
+            <div className="text-2xl font-black text-amber-400 font-mono">
+              Bid: {safeState.highest_bid || 0}M
+            </div>
+
+            {/* ACTION BUTTONS */}
+            {!isAuctionComplete ? (
+              <div className="flex gap-2 w-full pt-2">
+                <Button 
+                  onClick={() => handlePlaceBid((safeState.highest_bid || 0) + 5)}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs transition"
+                >
+                  Place Bid (+5M) 💰
+                </Button>
+                <Button 
+                  onClick={handleSkipBid}
+                  className="px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl text-xs transition"
+                >
+                  Skip ⏭️
+                </Button>
+              </div>
+            ) : (
+              <Button 
+                onClick={handleStartMatch}
+                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-3 rounded-xl text-sm transition shadow-lg shadow-blue-900/40 flex items-center justify-center gap-2"
+              >
+                <Play size={16} /> Start Match Simulation ⚽
+              </Button>
+            )}
+          </div>
+
+          {/* OPPONENT STATS */}
+          <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 space-y-3">
+            <h3 className="text-sm font-bold text-purple-400 flex items-center gap-2">
+              <Bot size={16} /> {opponentInfo.name}
+            </h3>
+            <div className="flex justify-between text-xs text-slate-300">
+              <span>Budget: <strong className="text-purple-400">{p2Budget}M</strong></span>
+              <span>Cards: <strong className="text-white">{p2TeamCount}/9</strong></span>
+            </div>
+          </div>
+
+        </div>
+
+        {/* MATCH RESULT DISPLAY (IF FINISHED) */}
+        {displayMatchResult && (
+          <div className="bg-slate-950 p-6 rounded-2xl border border-emerald-500/30 text-center space-y-3 animate-fade-in">
+            <h3 className="text-lg font-bold text-emerald-400">Match Result 🏆</h3>
+            <div className="text-3xl font-black font-mono tracking-wider">
+              {displayMatchResult.score.player1} - {displayMatchResult.score.player2}
+            </div>
+            <p className="text-xs text-slate-400">Winner: <span className="text-white font-bold">{displayMatchResult.winner === 'player1' ? player1Id : opponentInfo.name}</span></p>
+          </div>
+        )}
+
       </div>
+
+      {/* MYSTERY BOX MODAL */}
+      {showMysteryBox && currentMysteryBox && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-amber-500/40 p-6 rounded-3xl max-w-sm w-full text-center space-y-4 shadow-2xl animate-scale-up">
+            <div className="inline-flex p-3 bg-amber-500/20 text-amber-400 rounded-2xl border border-amber-500/30">
+              <Gift size={32} />
+            </div>
+            <h3 className="text-xl font-bold">Mystery Box Unlocked! 🎁</h3>
+            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-1">
+              <p className="text-sm font-bold text-white">{currentMysteryBox.name}</p>
+              <p className="text-xs text-amber-400 font-semibold">Rarity: {currentMysteryBox.rarity} | Rating: {currentMysteryBox.rating}</p>
+            </div>
+            <Button 
+              onClick={handleCloseMysteryBox}
+              className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-3 rounded-xl text-sm transition"
+            >
+              Claim Player & Continue ⚡
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
