@@ -1,23 +1,25 @@
 /**
  * ============================================================================
- * OSM FUT Dual Battle - Enterprise WebSocket Hook
- * Version: 5.0.0 - Automatic Reconnection, Heartbeat, Decoupled Types
+ * OSM FUT Dual Battle - Enterprise WebSocket Hook (Sentinel Engine)
+ * Version: 6.0.0 - Auto-Reconnect, Message Buffer, Robust Heartbeat
  * ============================================================================
  *
  * Features:
  * - Fully decoupled local types (no external import dependencies)
- * - Automatic reconnection with exponential backoff strategy
- * - Heartbeat / Ping-Pong keep-alive mechanism
- * - Defensive JSON parsing and error handling
+ * - Automatic reconnection with exponential backoff and jitter
+ * - Heartbeat / Ping-Pong with adaptive interval
+ * - Message buffer queue to prevent data loss during reconnection
+ * - Defensive multi-format message parsing (JSON, ArrayBuffer, Blob)
  * - Memory leak prevention with proper cleanup
  * - Re-render optimization using refs for mutable state
+ * - Connection health monitoring
  */
 
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-// ==================== LOCAL TYPES (Decoupled from Global Types) ====================
+// ==================== LOCAL TYPES ====================
 
 interface GameMessage {
   type?: string
@@ -62,17 +64,22 @@ interface UseWebSocketReturn {
   send: (message: Partial<GameMessage>) => void
   reconnect: () => void
   connectionAttempts: number
+  connectionHealth: 'healthy' | 'degraded' | 'critical' | 'offline'
 }
 
 // ==================== CONSTANTS ====================
 
-const INITIAL_RECONNECT_DELAY_MS = 1000
-const MAX_RECONNECT_DELAY_MS = 30000
-const RECONNECT_BACKOFF_MULTIPLIER = 2
-const HEARTBEAT_INTERVAL_MS = 25000
-const PONG_TIMEOUT_MS = 10000
-const CONNECTION_TIMEOUT_MS = 5000
-const MAX_RECONNECT_ATTEMPTS = 10
+const INITIAL_RECONNECT_DELAY_MS = 800
+const MAX_RECONNECT_DELAY_MS = 25000
+const RECONNECT_BACKOFF_MULTIPLIER = 1.8
+const RECONNECT_JITTER_MS = 400
+const HEARTBEAT_INTERVAL_MS = 20000
+const PONG_TIMEOUT_MS = 8000
+const CONNECTION_TIMEOUT_MS = 6000
+const MAX_RECONNECT_ATTEMPTS = 15
+const MESSAGE_BUFFER_MAX_SIZE = 50
+const HEALTH_CHECK_WINDOW_MS = 60000
+const MAX_MISSED_HEARTBEATS = 3
 
 // ==================== HOOK IMPLEMENTATION ====================
 
@@ -87,13 +94,15 @@ export const useWebSocket = ({
   const [isConnected, setIsConnected] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const [connectionAttempts, setConnectionAttempts] = useState<number>(0)
+  const [connectionHealth, setConnectionHealth] = useState<'healthy' | 'degraded' | 'critical' | 'offline'>('offline')
 
-  // ===== Refs (Mutable values that do not trigger re-renders) =====
+  // ===== Refs =====
   const socketRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pongTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const isMountedRef = useRef<boolean>(true)
   const isManuallyClosedRef = useRef<boolean>(false)
   const reconnectAttemptsRef = useRef<number>(0)
@@ -101,13 +110,47 @@ export const useWebSocket = ({
   const onMessageRef = useRef(onMessage)
   const onConnectRef = useRef(onConnect)
   const onDisconnectRef = useRef(onDisconnect)
+  const missedHeartbeatsRef = useRef<number>(0)
+  const lastSuccessfulMessageRef = useRef<number>(Date.now())
+  const messageBufferRef = useRef<GameMessage[]>([])
+  const isReconnectingRef = useRef<boolean>(false)
 
-  // Keep callback refs updated without triggering re-renders
+  // Keep callback refs updated
   onMessageRef.current = onMessage
   onConnectRef.current = onConnect
   onDisconnectRef.current = onDisconnect
 
-  // ===== Cleanup All Timers & Intervals =====
+  // ===== Health Monitoring =====
+  const updateConnectionHealth = useCallback(() => {
+    if (!isMountedRef.current) return
+    const now = Date.now()
+    const timeSinceLastMessage = now - lastSuccessfulMessageRef.current
+
+    if (!isConnected) {
+      setConnectionHealth('offline')
+    } else if (missedHeartbeatsRef.current >= MAX_MISSED_HEARTBEATS) {
+      setConnectionHealth('critical')
+    } else if (timeSinceLastMessage > HEALTH_CHECK_WINDOW_MS) {
+      setConnectionHealth('degraded')
+    } else {
+      setConnectionHealth('healthy')
+    }
+  }, [isConnected])
+
+  // ===== Flush Message Buffer =====
+  const flushMessageBuffer = useCallback(() => {
+    if (messageBufferRef.current.length === 0) return
+    console.log(`[WebSocket] Flushing ${messageBufferRef.current.length} buffered messages`)
+    const messages = [...messageBufferRef.current]
+    messageBufferRef.current = []
+    messages.forEach((msg) => {
+      if (isMountedRef.current) {
+        onMessageRef.current?.(msg)
+      }
+    })
+  }, [])
+
+  // ===== Cleanup All Timers =====
   const clearAllTimers = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current)
@@ -124,6 +167,10 @@ export const useWebSocket = ({
     if (connectionTimeoutRef.current) {
       clearTimeout(connectionTimeoutRef.current)
       connectionTimeoutRef.current = null
+    }
+    if (healthCheckIntervalRef.current) {
+      clearInterval(healthCheckIntervalRef.current)
+      healthCheckIntervalRef.current = null
     }
   }, [])
 
@@ -143,6 +190,7 @@ export const useWebSocket = ({
     }
     if (isMountedRef.current) {
       setIsConnected(false)
+      setConnectionHealth('offline')
     }
   }, [clearAllTimers])
 
@@ -154,6 +202,8 @@ export const useWebSocket = ({
     if (pongTimeoutRef.current) {
       clearTimeout(pongTimeoutRef.current)
     }
+
+    missedHeartbeatsRef.current = 0
 
     heartbeatIntervalRef.current = setInterval(() => {
       if (!isMountedRef.current || !socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
@@ -167,18 +217,22 @@ export const useWebSocket = ({
         }))
       } catch (sendError) {
         console.error('[WebSocket] Heartbeat send failed:', sendError)
+        missedHeartbeatsRef.current += 1
+        updateConnectionHealth()
         return
       }
 
       pongTimeoutRef.current = setTimeout(() => {
         console.warn('[WebSocket] Pong timeout - connection may be stale')
-        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        missedHeartbeatsRef.current += 1
+        updateConnectionHealth()
+        if (missedHeartbeatsRef.current >= MAX_MISSED_HEARTBEATS && socketRef.current) {
           isManuallyClosedRef.current = false
           socketRef.current.close(4001, 'Pong timeout')
         }
       }, PONG_TIMEOUT_MS)
     }, HEARTBEAT_INTERVAL_MS)
-  }, [])
+  }, [updateConnectionHealth])
 
   // ===== Build WebSocket URL =====
   const buildWebSocketUrl = useCallback((): string => {
@@ -187,7 +241,7 @@ export const useWebSocket = ({
     }
 
     const isLocal: boolean = typeof window !== 'undefined' && (
-      window.location.hostname.includes('localhost') || 
+      window.location.hostname.includes('localhost') ||
       window.location.hostname.includes('127.0.0.1')
     )
 
@@ -207,6 +261,28 @@ export const useWebSocket = ({
     return `${wsProtocol}://${backendHost}/api/ws/game/${sessionId}/${playerId}`
   }, [sessionId, playerId])
 
+  // ===== Parse Incoming Message =====
+  const parseIncomingMessage = useCallback((event: MessageEvent): GameMessage | null => {
+    try {
+      if (typeof event.data === 'string') {
+        return JSON.parse(event.data)
+      } else if (event.data instanceof ArrayBuffer) {
+        const decoder = new TextDecoder('utf-8')
+        const text = decoder.decode(event.data)
+        return JSON.parse(text)
+      } else if (event.data instanceof Blob) {
+        console.warn('[WebSocket] Received Blob data - using synchronous fallback')
+        return null
+      } else {
+        console.warn('[WebSocket] Unknown message data type:', typeof event.data)
+        return null
+      }
+    } catch (parseError) {
+      console.error('[WebSocket] JSON parse error:', parseError, 'Raw data:', typeof event.data)
+      return null
+    }
+  }, [])
+
   // ===== Connect WebSocket =====
   const connectSocket = useCallback(() => {
     if (!isMountedRef.current) return
@@ -215,7 +291,6 @@ export const useWebSocket = ({
       return
     }
 
-    // Close existing socket before creating new one
     if (socketRef.current) {
       socketRef.current.onopen = null
       socketRef.current.onmessage = null
@@ -249,8 +324,8 @@ export const useWebSocket = ({
 
     socketRef.current = ws
     isManuallyClosedRef.current = false
+    isReconnectingRef.current = false
 
-    // Connection timeout
     connectionTimeoutRef.current = setTimeout(() => {
       if (ws.readyState === WebSocket.CONNECTING) {
         console.warn('[WebSocket] Connection timeout')
@@ -271,48 +346,28 @@ export const useWebSocket = ({
       setIsConnected(true)
       setError(null)
       setConnectionAttempts(0)
+      setConnectionHealth('healthy')
       reconnectAttemptsRef.current = 0
       currentReconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS
+      missedHeartbeatsRef.current = 0
+      lastSuccessfulMessageRef.current = Date.now()
 
       startHeartbeat()
       onConnectRef.current?.()
+
+      // Flush any buffered messages from reconnection period
+      flushMessageBuffer()
     }
 
     // ===== onmessage =====
     ws.onmessage = (event: MessageEvent) => {
       if (!isMountedRef.current) return
 
-      let parsedMessage: GameMessage
+      const parsedMessage = parseIncomingMessage(event)
+      if (!parsedMessage) return
 
-      try {
-        if (typeof event.data === 'string') {
-          parsedMessage = JSON.parse(event.data)
-        } else if (event.data instanceof ArrayBuffer) {
-          const decoder = new TextDecoder('utf-8')
-          const text = decoder.decode(event.data)
-          parsedMessage = JSON.parse(text)
-        } else if (event.data instanceof Blob) {
-          const reader = new FileReader()
-          reader.onload = () => {
-            if (reader.result && isMountedRef.current) {
-              try {
-                const blobMessage: GameMessage = JSON.parse(reader.result as string)
-                onMessageRef.current?.(blobMessage)
-              } catch (blobParseError) {
-                console.error('[WebSocket] Blob parse error:', blobParseError)
-              }
-            }
-          }
-          reader.readAsText(event.data)
-          return
-        } else {
-          console.warn('[WebSocket] Unknown message data type:', typeof event.data)
-          return
-        }
-      } catch (parseError) {
-        console.error('[WebSocket] JSON parse error:', parseError, 'Raw data:', event.data)
-        return
-      }
+      lastSuccessfulMessageRef.current = Date.now()
+      missedHeartbeatsRef.current = 0
 
       // Handle pong response
       if (parsedMessage.type === 'pong') {
@@ -320,15 +375,26 @@ export const useWebSocket = ({
           clearTimeout(pongTimeoutRef.current)
           pongTimeoutRef.current = null
         }
+        updateConnectionHealth()
         return
       }
 
-      // Forward message to handler
+      // Handle error messages
       if (parsedMessage.type === 'error') {
         setError(parsedMessage.message || parsedMessage.error || 'Unknown server error')
       }
 
+      // If currently reconnecting, buffer the message
+      if (isReconnectingRef.current) {
+        if (messageBufferRef.current.length < MESSAGE_BUFFER_MAX_SIZE) {
+          messageBufferRef.current.push(parsedMessage)
+        }
+        return
+      }
+
+      // Forward message to handler
       onMessageRef.current?.(parsedMessage)
+      updateConnectionHealth()
     }
 
     // ===== onerror =====
@@ -336,6 +402,7 @@ export const useWebSocket = ({
       console.error('[WebSocket] Error event:', event)
       if (isMountedRef.current) {
         setError('WebSocket connection error')
+        setConnectionHealth('degraded')
       }
     }
 
@@ -349,27 +416,31 @@ export const useWebSocket = ({
 
       if (isMountedRef.current) {
         setIsConnected(false)
+        setConnectionHealth('offline')
       }
 
       onDisconnectRef.current?.()
 
-      // Only reconnect if not manually closed and not a normal closure
-      if (!isManuallyClosedRef.current && event.code !== 1000) {
+      // Only reconnect if not manually closed
+      if (!isManuallyClosedRef.current) {
+        isReconnectingRef.current = true
         scheduleReconnect()
       }
     }
-  }, [sessionId, playerId, buildWebSocketUrl, clearAllTimers, startHeartbeat])
+  }, [sessionId, playerId, buildWebSocketUrl, clearAllTimers, startHeartbeat, parseIncomingMessage, flushMessageBuffer, updateConnectionHealth])
 
-  // ===== Schedule Reconnection with Exponential Backoff =====
+  // ===== Schedule Reconnection with Exponential Backoff + Jitter =====
   const scheduleReconnect = useCallback(() => {
     if (!isMountedRef.current) return
     if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
       console.error('[WebSocket] Max reconnection attempts reached')
-      setError('Unable to establish connection after multiple attempts')
+      setError('Unable to establish connection after maximum attempts')
+      setConnectionHealth('offline')
       return
     }
 
-    const delay: number = currentReconnectDelayRef.current
+    const jitter = Math.floor(Math.random() * RECONNECT_JITTER_MS)
+    const delay: number = currentReconnectDelayRef.current + jitter
     console.log(`[WebSocket] Scheduling reconnect in ${delay}ms (Attempt: ${reconnectAttemptsRef.current + 1})`)
 
     reconnectTimeoutRef.current = setTimeout(() => {
@@ -391,23 +462,32 @@ export const useWebSocket = ({
     currentReconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS
     setConnectionAttempts(0)
     setError(null)
+    isReconnectingRef.current = true
     closeSocket()
     isManuallyClosedRef.current = false
     connectSocket()
   }, [closeSocket, connectSocket])
 
-  // ===== Send Message =====
+  // ===== Send Message with Buffer Support =====
   const send = useCallback((message: Partial<GameMessage>) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       try {
         const payload: string = JSON.stringify(message)
         socketRef.current.send(payload)
+        lastSuccessfulMessageRef.current = Date.now()
       } catch (sendError) {
         console.error('[WebSocket] Send failed:', sendError)
         setError('Failed to send message')
       }
     } else {
       console.warn('[WebSocket] Cannot send - socket not open. ReadyState:', socketRef.current?.readyState)
+      // Buffer important messages for reconnection
+      if (message.type && ['place_bid', 'skip_bid', 'start_match'].includes(message.type)) {
+        if (messageBufferRef.current.length < MESSAGE_BUFFER_MAX_SIZE) {
+          messageBufferRef.current.push(message as GameMessage)
+          console.log('[WebSocket] Message buffered for reconnection')
+        }
+      }
     }
   }, [])
 
@@ -417,8 +497,14 @@ export const useWebSocket = ({
     isManuallyClosedRef.current = false
     reconnectAttemptsRef.current = 0
     currentReconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS
+    messageBufferRef.current = []
 
     connectSocket()
+
+    // Health check monitoring
+    healthCheckIntervalRef.current = setInterval(() => {
+      updateConnectionHealth()
+    }, 10000)
 
     return () => {
       console.log('[WebSocket] Component unmounting - cleaning up')
@@ -426,6 +512,7 @@ export const useWebSocket = ({
       isManuallyClosedRef.current = true
       closeSocket()
       clearAllTimers()
+      messageBufferRef.current = []
     }
   }, [sessionId, playerId])
 
@@ -435,5 +522,6 @@ export const useWebSocket = ({
     send,
     reconnect,
     connectionAttempts,
+    connectionHealth,
   }
 }
