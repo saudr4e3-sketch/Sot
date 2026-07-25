@@ -172,9 +172,9 @@ const generateMysteryBox = (position: string): MysteryBoxCard => {
   }
 
   const ratings = {
-    Weak: Math.floor(Math.random() * 10) + 70, // 70-79
-    Medium: Math.floor(Math.random() * 10) + 80, // 80-89
-    Legendary: Math.floor(Math.random() * 6) + 90 // 90-95
+    Weak: Math.floor(Math.random() * 10) + 70,
+    Medium: Math.floor(Math.random() * 10) + 80,
+    Legendary: Math.floor(Math.random() * 6) + 90
   }
 
   const mysteryPlayers = {
@@ -206,17 +206,14 @@ const calculateMatchResult = (
   tactics1: any = {},
   tactics2: any = {}
 ): MatchResult => {
-  // 40% Rating Calculation
   const avgRating1 = team1.reduce((sum: number, p: any) => sum + (p.rating || 75), 0) / Math.max(team1.length, 1)
   const avgRating2 = team2.reduce((sum: number, p: any) => sum + (p.rating || 75), 0) / Math.max(team2.length, 1)
   const ratingScore1 = (avgRating1 / 100) * MATCH_WEIGHTS.RATING_WEIGHT
   const ratingScore2 = (avgRating2 / 100) * MATCH_WEIGHTS.RATING_WEIGHT
 
-  // 30% Tactics & Synergy
   const tacticScore1 = ((tactics1.formation_synergy || 0.5) + (tactics1.playstyle_effectiveness || 0.5)) / 2 * MATCH_WEIGHTS.TACTIC_WEIGHT
   const tacticScore2 = ((tactics2.formation_synergy || 0.5) + (tactics2.playstyle_effectiveness || 0.5)) / 2 * MATCH_WEIGHTS.TACTIC_WEIGHT
 
-  // 30% Momentum & RNG
   const momentum1 = Math.random() * MATCH_WEIGHTS.MOMENTUM_WEIGHT
   const momentum2 = Math.random() * MATCH_WEIGHTS.MOMENTUM_WEIGHT
 
@@ -225,16 +222,12 @@ const calculateMatchResult = (
 
   const winner = totalScore1 >= totalScore2 ? 'player1' : 'player2'
   
-  // Generate realistic scores based on total scores
-  const baseGoals = Math.floor(Math.random() * 3)
   const score1 = Math.max(0, Math.floor(totalScore1 * 5) + (winner === 'player1' ? 1 : 0))
   const score2 = Math.max(0, Math.floor(totalScore2 * 5) + (winner === 'player2' ? 1 : 0))
 
-  // Generate match stats
   const possession1 = Math.floor(40 + (totalScore1 * 30))
   const possession2 = 100 - possession1
 
-  // Generate dynamic commentary
   const commentary = generateMatchCommentary(team1, team2, score1, score2, winner)
 
   return {
@@ -265,7 +258,6 @@ const generateMatchCommentary = (
   const totalEvents = score1 + score2
   let currentMinute = 0
 
-  // Generate goal events
   for (let i = 0; i < totalEvents; i++) {
     currentMinute = Math.floor(Math.random() * 90) + 1
     const isHome = i < score1
@@ -282,10 +274,8 @@ const generateMatchCommentary = (
     })
   }
 
-  // Sort events by minute
   events.sort((a, b) => a.minute - b.minute)
 
-  // Add final commentary
   events.push({
     minute: 90,
     type: 'final',
@@ -351,19 +341,16 @@ export default function GamePage() {
     const prevIndex = previousAuctionIndexRef.current
     const currentIndex = currentState.auction_index ?? 0
     
-    // If we moved to next auction round, check who lost
     if (prevIndex !== -1 && currentIndex > prevIndex) {
       const prevHighestBidder = lastAuctionStateRef.current?.highest_bidder
       const currentPosition = AUCTION_SEQUENCE[prevIndex]
       
-      // If player1 didn't win the previous round
       if (prevHighestBidder && prevHighestBidder !== player1Id && currentPosition) {
         const mysteryBox = generateMysteryBox(currentPosition)
         setCurrentMysteryBox(mysteryBox)
         setShowMysteryBox(true)
         addLog(`🎁 Mystery Box awarded: ${mysteryBox.name} (${mysteryBox.rarity})`)
         
-        // Add to player's team
         const updatedState = {
           ...currentState,
           mystery_boxes: [...(currentState.mystery_boxes || []), mysteryBox],
@@ -646,7 +633,6 @@ export default function GamePage() {
       timestamp: Date.now()
     } as any)
     
-    // Safety timeout to reset bid state
     setTimeout(() => {
       if (bidInProgress && isMountedRef.current) {
         setBidInProgress(false)
@@ -682,13 +668,11 @@ export default function GamePage() {
     addLog('⚽ Starting match simulation')
     
     if (isBotMatch || !isConnected) {
-      // Client-side match simulation for bot matches or offline mode
       const currentState = currentAuctionStateRef.current
       if (currentState) {
         const p1Team = (currentState.team1 || currentState.player1_team || []) as any[]
         const p2Team = (currentState.team2 || currentState.player2_team || []) as any[]
         
-        // Apply 40/30/30 formula
         const result = calculateMatchResult(
           Array.isArray(p1Team) ? p1Team : Object.values(p1Team).flat(),
           Array.isArray(p2Team) ? p2Team : Object.values(p2Team).flat(),
@@ -701,7 +685,6 @@ export default function GamePage() {
         setIsSimulating(false)
         setIsLoading(false)
         
-        // Update state with match result
         const updatedState = {
           ...currentState,
           match_result: result,
@@ -774,7 +757,6 @@ export default function GamePage() {
         currentAuctionStateRef.current = updatedState
         lastAuctionStateRef.current = updatedState
       } else if (currentTime <= 1) {
-        // Timer reached zero
         if (timerIntervalRef.current) {
           clearInterval(timerIntervalRef.current)
           timerIntervalRef.current = null
@@ -841,7 +823,6 @@ export default function GamePage() {
           <p className="text-text-primary font-semibold">Connecting to Game Server</p>
           <p className="text-xs text-text-secondary">Secure WebSocket handshake in progress...</p>
           
-          {/* Game Mode Indicator */}
           <div className="flex items-center justify-center gap-2 mt-2">
             {isBotMatch ? (
               <span className="bg-blue-500/20 text-blue-400 text-xs px-3 py-1 rounded-full flex items-center gap-1">
@@ -887,3 +868,14 @@ export default function GamePage() {
     total_budget: 100,
     current_mindset: 'MASTERMIND',
     team: (safeState as any).team2 || [],
+    is_bot: player2Id === 'Goat_Bot'
+  }
+
+  const p1Team = (safeState as any).team1 || safeState.player1_team || []
+  const p2Team = opponentInfo.team || (safeState as any).team2 || safeState.player2_team || []
+
+  const p1TeamCount = Array.isArray(p1Team) ? p1Team.length : (typeof p1Team === 'object' ? Object.values(p1Team).flat().length : 0)
+  const p2TeamCount = Array.isArray(p2Team) ? p2Team.length : (typeof p2Team === 'object' ? Object.values(p2Team).flat().length : 0)
+  const p2Budget = opponentInfo.budget || opponentInfo.total_budget || 100
+
+  const displayMatchResult = matchSimulation || safeState.match_result
