@@ -476,7 +476,7 @@ export default function GamePage() {
               currentBid={safeState.highest_bid ?? 0}
               isYourTurn={isPlayersTurn}
               currentPosition={safeState.current_position ?? 'GK'}
-              currentPlayer={safeState.current_player ?? undefined}
+              currentPlayer={safeState.current_player as any}
               onBid={handlePlaceBid}
               onSkip={handleSkipBid}
               disabled={!isPlayersTurn || isLoading || isAuctionComplete || !isConnected}
