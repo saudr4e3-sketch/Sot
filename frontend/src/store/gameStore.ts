@@ -664,7 +664,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const totalPositions = currentState.total_positions ?? 9
     const isFinished = nextIndex >= totalPositions
 
-    // Build updated acquired player IDs list to prevent duplicates
     const currentAcquiredIds = currentState.acquired_player_ids || []
     let updatedAcquiredIds = [...currentAcquiredIds]
 
@@ -675,7 +674,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
     }
 
-    // Determine next position from sequence
     const nextPosition = isFinished ? '' : (currentState.auction_sequence && currentState.auction_sequence[nextIndex]) || DEFAULT_AUCTION_SEQUENCE[nextIndex] || ''
 
     const updatedState: AuctionState = {
@@ -842,3 +840,4 @@ export const useGameStore = create<GameStore>((set, get) => ({
         team2: Object.values(currentTeam).flat(),
         player2_cards_won: totalCards,
         acquired_player_ids: updatedAcquiredIds,
+        last_activity_timestamp: Date.now
