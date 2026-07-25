@@ -39,9 +39,6 @@ interface RuleCard {
   icon: React.ReactNode
 }
 
-// Deterministic 5-digit tag generator: the same Player ID always resolves
-// to the same tag, so it reads as an assigned identity rather than a
-// random number that changes on every render.
 function generatePlayerTag(id: string): string {
   if (!id.trim()) return ''
   let hash = 0
@@ -504,7 +501,7 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row justify-between items-center text-center sm:text-left gap-2">
             <p className="text-text-secondary text-sm">
-              © 2024 OSM FUT Dual Battle. All rights reserved.
+              © 2026 OSM FUT Dual Battle. All rights reserved.
             </p>
             <p className="text-text-secondary text-sm">
               Developer: <span className="text-accent-terracotta font-semibold">Saud Yahya Al-Faifi</span> |{' '}
