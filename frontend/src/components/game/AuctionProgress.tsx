@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { AuctionState } from '@/types/game'
+import type AuctionState from '@/types/game'
 import Card from '@/components/ui/Card'
 import { 
   Users, 
@@ -314,12 +314,12 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
   )
   
   const player1Cards = useMemo(() => 
-    Object.values(state.player1_team).flat().length,
+    Object.values(state.player1_team || {}).flat().length,
     [state.player1_team]
   )
   
   const player2Cards = useMemo(() => 
-    Object.values(state.player2_team).flat().length,
+    Object.values(state.player2_team || {}).flat().length,
     [state.player2_team]
   )
   
@@ -327,7 +327,7 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
   const timerDuration = externalDuration
   
   const isAuctionActive = useMemo(() => 
-    state.status === 'active' || state.status === 'bid_placed' || state.status === 'turn_passed',
+    state.status === 'active' || state.status === 'bid_placed' || state.status === 'turn_passed' || state.status === 'bidding',
     [state.status]
   )
   
@@ -341,7 +341,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
   
   // ===== Timer Management =====
   const startInternalTimer = useCallback(() => {
-    // Clear existing interval
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current)
     }
@@ -354,7 +353,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
       setInternalTimer(prev => {
         const next = prev - 0.1
         if (next <= 0) {
-          // Timer expired
           setIsTimerActive(false)
           setTimerSeverity('expired')
           
@@ -362,21 +360,16 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
             clearInterval(timerIntervalRef.current)
           }
           
-          // Call expiry callback
           onTimerExpired?.()
-          
           return 0
         }
         
-        // Update severity
         setTimerSeverity(calculateSeverity(next))
-        
         return Math.max(0, next)
       })
       
-      // Force re-render for smooth animation
       setTimerTick(prev => prev + 1)
-    }, 100) // Update every 100ms for smooth animation
+    }, 100)
   }, [timerDuration, calculateSeverity, onTimerExpired])
   
   const stopTimer = useCallback(() => {
@@ -391,12 +384,10 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
   useEffect(() => {
     const currentTurn = state.current_turn_player
     
-    // Detect turn change
     if (currentTurn !== previousTurnRef.current) {
       previousTurnRef.current = currentTurn
       
       if (currentTurn && isAuctionActive) {
-        // New turn started - reset timer
         if (externalTimer === undefined) {
           startInternalTimer()
         }
@@ -406,7 +397,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
       }
     }
     
-    // Handle auction completion
     if (!isAuctionActive) {
       stopTimer()
     }
@@ -446,7 +436,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
   // ===== Render Helpers =====
   const getTurnIndicatorClass = (playerKey: string) => {
     const isCurrentTurn = state.current_turn_player === playerKey
-    const isPlayer1 = playerKey === 'player1'
     
     if (isCurrentTurn && timerSeverity === 'critical') {
       return 'bg-red-500/20 border-2 border-red-500/50 shadow-lg shadow-red-500/20 animate-pulse'
@@ -483,9 +472,7 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
       {/* ===== Timer Section ===== */}
       {isAuctionActive && (
         <div className="space-y-3">
-          {/* Circular Timer for Mobile, Bar for Desktop */}
           <div className="flex items-center gap-4">
-            {/* Circular Timer (Hidden on small screens) */}
             <div className="hidden sm:block">
               <CircularTimer
                 remaining={currentTimer}
@@ -496,9 +483,7 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
               />
             </div>
             
-            {/* Timer Info Section */}
             <div className="flex-1 space-y-2">
-              {/* Current Turn Indicator */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full ${
@@ -517,7 +502,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
                   </span>
                 </div>
                 
-                {/* Timer Icon for Mobile */}
                 <div className="sm:hidden">
                   <Timer 
                     size={16} 
@@ -528,7 +512,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
                 </div>
               </div>
               
-              {/* Timer Progress Bar */}
               <TimerBar
                 remaining={currentTimer}
                 duration={timerDuration}
@@ -538,7 +521,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
             </div>
           </div>
           
-          {/* Timer Alert */}
           <TimerAlert
             severity={timerSeverity}
             remaining={Math.ceil(currentTimer)}
@@ -555,7 +537,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
             Auction Progress
           </p>
           <div className="flex items-center gap-2">
-            {/* Mini progress indicator */}
             <div className="hidden sm:flex items-center gap-1">
               {[...Array(state.total_positions)].map((_, i) => (
                 <div
@@ -576,17 +557,12 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
           </div>
         </div>
         
-        {/* Progress Bar */}
         <div className="w-full bg-dark-bg-alt rounded-full h-3 overflow-hidden relative">
-          {/* Background Pattern */}
           <div className="absolute inset-0 opacity-10 bg-[repeating-linear-gradient(90deg,transparent,transparent_4px,rgba(255,255,255,0.05)_4px,rgba(255,255,255,0.05)_8px)]" />
-          
-          {/* Progress Fill */}
           <div
             className="bg-gradient-to-r from-accent-terracotta via-accent-terracotta to-accent-gold h-full transition-all duration-500 ease-out relative"
             style={{ width: `${progress}%` }}
           >
-            {/* Shine effect */}
             {progress > 0 && (
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
             )}
@@ -600,7 +576,7 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
           Sequence
         </p>
         <div className="grid grid-cols-9 gap-1">
-          {state.auction_sequence.map((pos, idx) => {
+          {state.auction_sequence?.map((pos, idx) => {
             const isCurrent = idx === state.auction_index
             const isCompleted = idx < state.auction_index
             const isUpcoming = idx > state.auction_index
@@ -619,16 +595,12 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
                   ${isUpcoming ? 'opacity-60 hover:opacity-100' : ''}
                 `}
               >
-                {/* Position indicator for current */}
                 {isCurrent && (
                   <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-white rounded-full animate-ping" />
                 )}
-                
-                {/* Card count for completed */}
                 {isCompleted && (
                   <div className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-emerald-400 rounded-full" />
                 )}
-                
                 <span className="relative z-10">{pos}</span>
               </div>
             )
@@ -638,7 +610,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
 
       {/* ===== Players Info ===== */}
       <div className="grid grid-cols-2 gap-3">
-        {/* Player 1 */}
         <div className={`p-3 rounded-btn transition-all duration-300 ${getTurnIndicatorClass('player1')}`}>
           <div className="flex items-center justify-between mb-1">
             <p className={`text-xs font-semibold uppercase tracking-wider ${getTurnTextColor('player1')}`}>
@@ -658,7 +629,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
             <p className="text-xs text-text-muted mb-0.5">Cards</p>
           </div>
           
-          {/* Budget Info */}
           <div className="mt-2 pt-2 border-t border-dark-card/50">
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-text-muted uppercase font-semibold">Budget</span>
@@ -669,7 +639,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
           </div>
         </div>
 
-        {/* Player 2 */}
         <div className={`p-3 rounded-btn transition-all duration-300 ${getTurnIndicatorClass('player2')}`}>
           <div className="flex items-center justify-between mb-1">
             <p className={`text-xs font-semibold uppercase tracking-wider ${getTurnTextColor('player2')}`}>
@@ -692,7 +661,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
             <p className="text-xs text-text-muted mb-0.5">Cards</p>
           </div>
           
-          {/* Budget Info */}
           <div className="mt-2 pt-2 border-t border-dark-card/50">
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-text-muted uppercase font-semibold">Budget</span>
@@ -740,7 +708,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
 
       {/* ===== Status Section ===== */}
       <div className="space-y-2">
-        {/* Status Badge */}
         <div className="text-xs text-text-secondary p-2 sm:p-3 rounded-btn bg-dark-bg-alt text-center border border-dark-card">
           <span className="uppercase tracking-wider">Status: </span>
           <span className={`font-bold uppercase ${
@@ -753,7 +720,6 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
           </span>
         </div>
         
-        {/* Next Position Indicator */}
         {state.next_position && (
           <div className="flex items-center justify-center gap-2 text-[10px] text-text-muted">
             <TrendingUp size={12} />
@@ -764,7 +730,5 @@ const AuctionProgress: React.FC<AuctionProgressProps> = ({
     </Card>
   )
 }
-
-// ==================== Export ====================
 
 export default AuctionProgress
