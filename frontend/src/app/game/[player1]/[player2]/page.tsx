@@ -13,14 +13,9 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { useGameStore } from '@/store/gameStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import AuctionTimer from '@/components/game/AuctionTimer'
-import AuctionProgress from '@/components/game/AuctionProgress'
-import CommentaryView from '@/components/game/CommentaryView'
-import MatchSimulation from '@/components/game/MatchSimulation'
-import MysteryBoxCard from '@/components/game/MysteryBoxCard'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
-import { AlertCircle, Loader, Play, Trophy, ShieldCheck, Zap, Activity, Cpu, Coins, Wifi, WifiOff, Gift, Users, Bot } from 'lucide-react'
+import { Loader, Play, Trophy, ShieldCheck, Zap, Activity, Cpu, Coins, Wifi, WifiOff, Gift, Users, Bot } from 'lucide-react'
 
 // ============================================================================
 // LOCAL TYPE DEFINITIONS
@@ -431,29 +426,64 @@ export default function GamePage() {
     },
   })
 
+  const handlePlaceBid = useCallback((amount: number) => {
+    if (!isConnected) return
+    if (bidInProgress) return
+    setBidInProgress(true)
+    setIsLoading(true)
+    send({ type: 'place_bid', action: 'place_bid', session_id: sessionId, player_id: player1Id, amount, timestamp: Date.now() } as any)
+    setTimeout(() => { if (bidInProgress && isMountedRef.current) { setBidInProgress(false); setIsLoading(false) } }, 5000)
+  }, [send, sessionId, player1Id, isConnected, setIsLoading, bidInProgress])
+
+  const handleSkipBid = useCallback(() => {
+    autoSkipSentRef.current = true
+    if (!isConnected) {
+      advanceLocally()
+      return
+    }
+    setIsLoading(true)
+    send({ type: 'skip_bid', action: 'skip_bid', session_id: sessionId, player_id: player1Id, timestamp: Date.now() } as any)
+  }, [send, sessionId, player1Id, isConnected, setIsLoading, advanceLocally])
+
+  const handleStartMatch = useCallback(() => {
+    setIsLoading(true)
+    setIsSimulating(true)
+    const currentState = currentAuctionStateRef.current || safeState
+    const p1Team = currentState.team1 || currentState.player1_team || []
+    const p2Team = currentState.team2 || currentState.player2_team || []
+    
+    const result = calculateMatchResult(
+      Array.isArray(p1Team) ? p1Team : Object.values(p1Team).flat(),
+      Array.isArray(p2Team) ? p2Team : Object.values(p2Team).flat(),
+      { formation_synergy: 0.7, playstyle_effectiveness: 0.8 },
+      { formation_synergy: 0.75, playstyle_effectiveness: 0.85 }
+    )
+    
+    setMatchSimulation(result)
+    setCommentary(result.commentary)
+    setIsSimulating(false)
+    setIsLoading(false)
+    
+    setAuctionState({
+      ...currentState,
+      match_result: result,
+      status: 'match_completed'
+    })
+  }, [setAuctionState, setIsLoading])
+
+  const handleCloseMysteryBox = useCallback(() => {
+    setShowMysteryBox(false)
+    setCurrentMysteryBox(null)
+  }, [])
+
   const safeState = auctionState || buildDefaultAuctionState(sessionId, player1Id, isBotMatch)
   const isAuctionComplete = safeState.status === 'completed' || safeState.status === 'match_completed'
-  const isPlayersTurn = safeState.current_turn_player === player1Id
-  const isMatchFinished = safeState.status === 'match_completed'
-
-  const opponentInfo = (safeState as any).opponent_info || {
-    id: player2Id,
-    name: player2Id === 'Goat_Bot' ? 'GOAT-X 🐐' : player2Id,
-    budget: 100,
-    cards_acquired: 0,
-    total_budget: 100,
-    current_mindset: 'MASTERMIND',
-    team: (safeState as any).team2 || [],
-    is_bot: player2Id === 'Goat_Bot'
-  }
-
-  const p1Team = (safeState as any).team1 || safeState.player1_team || []
-  const p2Team = opponentInfo.team || (safeState as any).team2 || safeState.player2_team || []
-
-  const p1TeamCount = Array.isArray(p1Team) ? p1Team.length : (typeof p1Team === 'object' ? Object.values(p1Team).flat().length : 0)
-  const p2TeamCount = Array.isArray(p2Team) ? p2Team.length : (typeof p2Team === 'object' ? Object.values(p2Team).flat().length : 0)
+  const opponentInfo = safeState.opponent_info || { id: player2Id, name: player2Id === 'Goat_Bot' ? 'GOAT-X 🐐' : player2Id, budget: 100, team: [] }
+  const p1Team = safeState.team1 || safeState.player1_team || []
+  const p2Team = safeState.team2 || safeState.player2_team || opponentInfo.team || []
+  const p1TeamCount = Array.isArray(p1Team) ? p1Team.length : Object.values(p1Team).flat().length
+  const p2TeamCount = Array.isArray(p2Team) ? p2Team.length : Object.values(p2Team).flat().length
   const p2Budget = opponentInfo.budget || opponentInfo.total_budget || 100
-
   const displayMatchResult = matchSimulation || safeState.match_result
 
   return (
@@ -556,9 +586,9 @@ export default function GamePage() {
 
         </div>
 
-        {/* MATCH RESULT DISPLAY (IF FINISHED) */}
+        {/* MATCH RESULT DISPLAY */}
         {displayMatchResult && (
-          <div className="bg-slate-950 p-6 rounded-2xl border border-emerald-500/30 text-center space-y-3 animate-fade-in">
+          <div className="bg-slate-950 p-6 rounded-2xl border border-emerald-500/30 text-center space-y-3">
             <h3 className="text-lg font-bold text-emerald-400">Match Result 🏆</h3>
             <div className="text-3xl font-black font-mono tracking-wider">
               {displayMatchResult.score.player1} - {displayMatchResult.score.player2}
@@ -572,7 +602,7 @@ export default function GamePage() {
       {/* MYSTERY BOX MODAL */}
       {showMysteryBox && currentMysteryBox && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-amber-500/40 p-6 rounded-3xl max-w-sm w-full text-center space-y-4 shadow-2xl animate-scale-up">
+          <div className="bg-slate-900 border border-amber-500/40 p-6 rounded-3xl max-w-sm w-full text-center space-y-4 shadow-2xl">
             <div className="inline-flex p-3 bg-amber-500/20 text-amber-400 rounded-2xl border border-amber-500/30">
               <Gift size={32} />
             </div>
