@@ -126,7 +126,7 @@ export type AcquisitionMethod = 'auction' | 'mystery_card' | 'trade' | 'reward' 
 /**
  * Represents a card in a player's collection.
  */
-export interface Card extends Partial<Player>, Partial<Manager> {
+export interface Card extends Omit<Partial<Player>, 'market_value'>, Omit<Partial<Manager>, 'market_value'> {
   type: CardType
   is_mystery: boolean
   acquired_from: AcquisitionMethod
@@ -146,6 +146,7 @@ export interface Card extends Partial<Player>, Partial<Manager> {
 
   chemistry_bonus?: number
   position_bonus?: number
+  market_value?: string | number
 }
 
 // ============================================================================
