@@ -1,32 +1,22 @@
 /**
  * ============================================================================
  * OSM FUT Dual Battle - Enterprise Global Game State Store
- * Version: 5.0.0 - Fully Decoupled Types, Defensive State Updates, Bot Tracking
+ * Version: 6.0.0 - Anti-Duplication, Card Progression, Seamless WebSocket Sync
  * ============================================================================
- *
- * Features:
- * - Fully decoupled local type definitions (no external import dependencies)
- * - Comprehensive auction state management with defensive updates
- * - Budget tracking for both players
- * - Bot opponent state tracking (Goat AI)
- * - Connection status and latency monitoring
- * - Match result and commentary storage
- * - Event logging for debugging and telemetry
- * - Reset functionality for new game sessions
  */
 
 'use client'
 
 import { create } from 'zustand'
 
-// ==================== LOCAL TYPES (Decoupled from Global Types) ====================
+// ==================== LOCAL TYPES ====================
 
 interface CurrentPlayerInfo {
   name: string
   position: string
   rating: number
   image_url?: string
-  rarity?: 'Legendary' | 'Medium' | 'Weak' | string
+  rarity?: string
   nationality?: string
   team?: string
   age?: number
@@ -66,6 +56,7 @@ interface Card {
   rating?: number
   rarity?: string
   image_url?: string
+  card_id?: string
 }
 
 interface AuctionState {
@@ -81,8 +72,6 @@ interface AuctionState {
   highest_bidder: string | null
   timer_remaining: number
   timer_duration?: number
-  turn_started_at?: string
-  turn_timeout_seconds?: number
   player1_budget: number
   player2_budget: number
   player1_total_spent: number
@@ -110,6 +99,8 @@ interface AuctionState {
   auction_progress?: number
   team1?: any[]
   team2?: any[]
+  acquired_player_ids?: string[]
+  [key: string]: any
 }
 
 interface CommentaryEvent {
@@ -157,10 +148,7 @@ interface MatchResult {
   commentary: CommentaryEvent[]
   match_events?: any[]
   statistics?: MatchStatistics
-  goal_details?: {
-    player1: GoalDetail[]
-    player2: GoalDetail[]
-  }
+  goal_details?: { player1: GoalDetail[]; player2: GoalDetail[] }
   match_summary?: string
   man_of_the_match?: string
   match_duration_seconds?: number
@@ -193,7 +181,6 @@ interface GameEvent {
 // ==================== STORE INTERFACE ====================
 
 interface GameStore {
-  // Core State
   sessionId: string
   playerId: string
   auctionState: AuctionState | null
@@ -203,49 +190,41 @@ interface GameStore {
   isInitialized: boolean
   gamePhase: 'idle' | 'connecting' | 'auction' | 'match' | 'completed'
 
-  // Connection State
   connectionInfo: ConnectionInfo
-
-  // Bot State
   botState: BotInfo | null
-
-  // Event Log
   gameEvents: GameEvent[]
 
-  // Core Actions
   setSessionId: (id: string) => void
   setPlayerId: (id: string) => void
   setAuctionState: (state: AuctionState | null) => void
   updateAuctionState: (partialState: Partial<AuctionState>) => void
+  advanceToNextCard: (nextPlayerData: CurrentPlayerInfo | null) => void
   setMatchResult: (result: MatchResult | null) => void
   setIsLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   setGamePhase: (phase: GameStore['gamePhase']) => void
   setIsInitialized: (initialized: boolean) => void
 
-  // Budget Actions
   updatePlayer1Budget: (budget: number, spent: number) => void
   updatePlayer2Budget: (budget: number, spent: number) => void
 
-  // Team Actions
   addCardToPlayer1Team: (position: string, card: Card) => void
   addCardToPlayer2Team: (position: string, card: Card) => void
 
-  // Connection Actions
+  markPlayerAsAcquired: (playerId: string) => void
+  isPlayerAcquired: (playerId: string) => boolean
+
   setConnectionStatus: (status: ConnectionInfo['status']) => void
   updateLatency: (latencyMs: number) => void
   incrementReconnectionAttempts: () => void
   resetReconnectionAttempts: () => void
 
-  // Bot Actions
   setBotState: (botInfo: BotInfo | null) => void
   updateBotBudget: (budget: number, cardsAcquired: number) => void
 
-  // Event Logging
   addGameEvent: (type: string, message: string, data?: any) => void
   clearGameEvents: () => void
 
-  // Reset
   reset: () => void
 }
 
@@ -276,7 +255,6 @@ const createInitialState = () => ({
 export const useGameStore = create<GameStore>((set, get) => ({
   ...createInitialState(),
 
-  // ===== Core Actions =====
   setSessionId: (id: string) => set({ sessionId: id }),
 
   setPlayerId: (id: string) => set({ playerId: id }),
@@ -287,7 +265,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return
     }
 
-    // Defensive: ensure required fields exist with safe defaults
     const safeState: AuctionState = {
       session_id: state.session_id || get().sessionId || '',
       status: state.status || 'idle',
@@ -303,8 +280,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       highest_bidder: state.highest_bidder || null,
       timer_remaining: typeof state.timer_remaining === 'number' ? state.timer_remaining : 30,
       timer_duration: state.timer_duration || 30,
-      turn_started_at: state.turn_started_at || '',
-      turn_timeout_seconds: state.turn_timeout_seconds || 30,
       player1_budget: typeof state.player1_budget === 'number' ? state.player1_budget : 100,
       player2_budget: typeof state.player2_budget === 'number' ? state.player2_budget : 100,
       player1_total_spent: typeof state.player1_total_spent === 'number' ? state.player1_total_spent : 0,
@@ -332,6 +307,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       auction_progress: state.auction_progress || 0,
       team1: (state as any).team1 || [],
       team2: (state as any).team2 || [],
+      acquired_player_ids: state.acquired_player_ids || [],
     }
 
     set({
@@ -352,13 +328,52 @@ export const useGameStore = create<GameStore>((set, get) => ({
     })
   },
 
+  // ===== NEW: Advance to Next Card with Duplication Prevention =====
+  advanceToNextCard: (nextPlayerData: CurrentPlayerInfo | null) => {
+    const currentState = get().auctionState
+    if (!currentState) return
+
+    const nextIndex = (currentState.auction_index ?? 0) + 1
+    const totalPositions = currentState.total_positions ?? 9
+    const isFinished = nextIndex >= totalPositions
+
+    // Build updated acquired player IDs list to prevent duplicates
+    const currentAcquiredIds = currentState.acquired_player_ids || []
+    let updatedAcquiredIds = [...currentAcquiredIds]
+
+    if (nextPlayerData && nextPlayerData.name && nextPlayerData.card_id) {
+      if (!updatedAcquiredIds.includes(nextPlayerData.card_id)) {
+        updatedAcquiredIds = [...updatedAcquiredIds, nextPlayerData.card_id]
+      }
+    }
+
+    const updatedState: AuctionState = {
+      ...currentState,
+      auction_index: nextIndex,
+      status: isFinished ? 'completed' : 'bidding',
+      current_position: isFinished ? '' : (currentState.auction_sequence && currentState.auction_sequence[nextIndex]) || '',
+      current_player: nextPlayerData,
+      timer_remaining: currentState.timer_duration || 30,
+      highest_bid: 0,
+      highest_bidder: null,
+      current_turn_player: currentState.session_id ? (currentState.current_turn_player || '') : '',
+      is_auction_finished: isFinished,
+      acquired_player_ids: updatedAcquiredIds,
+      last_activity_timestamp: Date.now(),
+    }
+
+    set({
+      auctionState: updatedState,
+      gamePhase: isFinished ? 'match' : 'auction',
+    })
+  },
+
   setMatchResult: (result: MatchResult | null) => {
     if (result === null) {
       set({ matchResult: null })
       return
     }
 
-    // Defensive: ensure required fields
     const safeResult: MatchResult = {
       player1_score: typeof result.player1_score === 'number' ? result.player1_score : 0,
       player2_score: typeof result.player2_score === 'number' ? result.player2_score : 0,
@@ -387,10 +402,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       player_performances: result.player_performances || {},
     }
 
-    set({
-      matchResult: safeResult,
-      gamePhase: 'completed',
-    })
+    set({ matchResult: safeResult, gamePhase: 'completed' })
   },
 
   setIsLoading: (loading: boolean) => set({ isLoading: loading }),
@@ -402,11 +414,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({
         gameEvents: [
           ...currentEvents.slice(-99),
-          {
-            timestamp: new Date().toISOString(),
-            type: 'error',
-            message: error,
-          },
+          { timestamp: new Date().toISOString(), type: 'error', message: error },
         ],
       })
     }
@@ -416,7 +424,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   setIsInitialized: (initialized: boolean) => set({ isInitialized: initialized }),
 
-  // ===== Budget Actions =====
   updatePlayer1Budget: (budget: number, spent: number) => {
     const currentState = get().auctionState
     if (!currentState) return
@@ -445,7 +452,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     })
   },
 
-  // ===== Team Actions =====
   addCardToPlayer1Team: (position: string, card: Card) => {
     const currentState = get().auctionState
     if (!currentState) return
@@ -455,12 +461,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
     currentTeam[position] = [...currentTeam[position], card]
     const totalCards = Object.values(currentTeam).flat().length
+
+    const currentAcquiredIds = currentState.acquired_player_ids || []
+    let updatedAcquiredIds = [...currentAcquiredIds]
+    if (card.card_id && !updatedAcquiredIds.includes(card.card_id)) {
+      updatedAcquiredIds = [...updatedAcquiredIds, card.card_id]
+    }
+
     set({
       auctionState: {
         ...currentState,
         player1_team: currentTeam,
         team1: Object.values(currentTeam).flat(),
         player1_cards_won: totalCards,
+        acquired_player_ids: updatedAcquiredIds,
         last_activity_timestamp: Date.now(),
       },
     })
@@ -475,24 +489,51 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
     currentTeam[position] = [...currentTeam[position], card]
     const totalCards = Object.values(currentTeam).flat().length
+
+    const currentAcquiredIds = currentState.acquired_player_ids || []
+    let updatedAcquiredIds = [...currentAcquiredIds]
+    if (card.card_id && !updatedAcquiredIds.includes(card.card_id)) {
+      updatedAcquiredIds = [...updatedAcquiredIds, card.card_id]
+    }
+
     set({
       auctionState: {
         ...currentState,
         player2_team: currentTeam,
         team2: Object.values(currentTeam).flat(),
         player2_cards_won: totalCards,
+        acquired_player_ids: updatedAcquiredIds,
         last_activity_timestamp: Date.now(),
       },
     })
   },
 
-  // ===== Connection Actions =====
+  // ===== NEW: Duplication Prevention =====
+  markPlayerAsAcquired: (playerId: string) => {
+    const currentState = get().auctionState
+    if (!currentState) return
+    const currentAcquiredIds = currentState.acquired_player_ids || []
+    if (!currentAcquiredIds.includes(playerId)) {
+      set({
+        auctionState: {
+          ...currentState,
+          acquired_player_ids: [...currentAcquiredIds, playerId],
+          last_activity_timestamp: Date.now(),
+        },
+      })
+    }
+  },
+
+  isPlayerAcquired: (playerId: string): boolean => {
+    const currentState = get().auctionState
+    if (!currentState) return false
+    const acquiredIds = currentState.acquired_player_ids || []
+    return acquiredIds.includes(playerId)
+  },
+
   setConnectionStatus: (status: ConnectionInfo['status']) => {
     set((state) => ({
-      connectionInfo: {
-        ...state.connectionInfo,
-        status,
-      },
+      connectionInfo: { ...state.connectionInfo, status },
     }))
   },
 
@@ -517,14 +558,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   resetReconnectionAttempts: () => {
     set((state) => ({
-      connectionInfo: {
-        ...state.connectionInfo,
-        reconnection_attempts: 0,
-      },
+      connectionInfo: { ...state.connectionInfo, reconnection_attempts: 0 },
     }))
   },
 
-  // ===== Bot Actions =====
   setBotState: (botInfo: BotInfo | null) => {
     set({ botState: botInfo })
     if (botInfo) {
@@ -555,24 +592,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
-  // ===== Event Logging =====
   addGameEvent: (type: string, message: string, data?: any) => {
     set((state) => ({
       gameEvents: [
         ...state.gameEvents.slice(-99),
-        {
-          timestamp: new Date().toISOString(),
-          type,
-          message,
-          data,
-        },
+        { timestamp: new Date().toISOString(), type, message, data },
       ],
     }))
   },
 
   clearGameEvents: () => set({ gameEvents: [] }),
 
-  // ===== Reset =====
   reset: () =>
     set({
       ...createInitialState(),
