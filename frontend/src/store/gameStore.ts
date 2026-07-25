@@ -275,7 +275,7 @@ interface GameStore {
   addGameEvent: (type: string, message: string, data?: any) => void
   clearGameEvents: () => void
 
-  // ===== NEW: Mystery Box & Match Engine Methods =====
+  // ===== Mystery Box & Match Engine Methods =====
   generateMysteryBox: (position: string) => MysteryBoxCard
   addMysteryBoxToPlayer: (playerId: 'player1' | 'player2', mysteryBox: MysteryBoxCard) => void
   calculateMatchResult: (team1: any[], team2: any[], tactics1?: any, tactics2?: any) => MatchResult
@@ -355,17 +355,14 @@ const calculateMatchResultInternal = (
   tactics2: any = {},
   weights: { rating_weight: number; tactic_weight: number; momentum_weight: number } = DEFAULT_MATCH_WEIGHTS
 ): MatchResult => {
-  // 40% Rating Calculation
   const avgRating1 = team1.reduce((sum: number, p: any) => sum + (p.rating || 75), 0) / Math.max(team1.length, 1)
   const avgRating2 = team2.reduce((sum: number, p: any) => sum + (p.rating || 75), 0) / Math.max(team2.length, 1)
   const ratingScore1 = (avgRating1 / 100) * weights.rating_weight
   const ratingScore2 = (avgRating2 / 100) * weights.rating_weight
 
-  // 30% Tactics & Synergy
   const tacticScore1 = ((tactics1.formation_synergy || 0.5) + (tactics1.playstyle_effectiveness || 0.5)) / 2 * weights.tactic_weight
   const tacticScore2 = ((tactics2.formation_synergy || 0.5) + (tactics2.playstyle_effectiveness || 0.5)) / 2 * weights.tactic_weight
 
-  // 30% Momentum & RNG
   const momentum1 = Math.random() * weights.momentum_weight
   const momentum2 = Math.random() * weights.momentum_weight
 
@@ -374,11 +371,9 @@ const calculateMatchResultInternal = (
 
   const winner = totalScore1 >= totalScore2 ? 'player1' : 'player2'
   
-  // Generate realistic scores based on total scores
   const score1 = Math.max(0, Math.floor(totalScore1 * 5) + (winner === 'player1' ? 1 : 0))
   const score2 = Math.max(0, Math.floor(totalScore2 * 5) + (winner === 'player2' ? 1 : 0))
 
-  // Generate match stats
   const possession1 = Math.floor(40 + (totalScore1 * 30))
   const possession2 = 100 - possession1
   const shots1 = Math.floor(score1 * 2 + Math.random() * 4)
@@ -386,10 +381,8 @@ const calculateMatchResultInternal = (
   const shotsOnTarget1 = Math.floor(shots1 * 0.6)
   const shotsOnTarget2 = Math.floor(shots2 * 0.6)
 
-  // Generate dynamic commentary
   const commentary = generateMatchCommentary(team1, team2, score1, score2, winner)
 
-  // Generate goal details
   const goalDetailsPlayer1: GoalDetail[] = []
   const goalDetailsPlayer2: GoalDetail[] = []
   
@@ -413,7 +406,6 @@ const calculateMatchResultInternal = (
     })
   }
 
-  // Man of the match
   const allPlayers = [...team1, ...team2]
   const motm = allPlayers[Math.floor(Math.random() * allPlayers.length)]
 
@@ -470,10 +462,8 @@ const generateMatchCommentary = (
   winner: string
 ): CommentaryEvent[] => {
   const events: CommentaryEvent[] = []
-  const totalEvents = score1 + score2
   const usedMinutes: number[] = []
 
-  // Generate goal events
   for (let i = 0; i < score1; i++) {
     let minute: number
     do {
@@ -522,7 +512,6 @@ const generateMatchCommentary = (
     })
   }
 
-  // Add some key moments
   const keyMoments = [
     { type: 'save', text: 'Brilliant save by the goalkeeper!' },
     { type: 'chance', text: 'Close chance! Just wide of the post.' },
@@ -554,7 +543,6 @@ const generateMatchCommentary = (
     })
   }
 
-  // Add final commentary
   events.push({
     minute: 90,
     type: 'final',
@@ -567,7 +555,6 @@ const generateMatchCommentary = (
     event_category: 'full_time'
   })
 
-  // Sort events by minute
   events.sort((a, b) => a.minute - b.minute)
 
   return events
@@ -655,7 +642,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     })
   },
 
-  // ===== Advance to Next Card with Duplication Prevention =====
   advanceToNextCard: (nextPlayerData: CurrentPlayerInfo | null) => {
     const currentState = get().auctionState
     if (!currentState) return
@@ -840,4 +826,163 @@ export const useGameStore = create<GameStore>((set, get) => ({
         team2: Object.values(currentTeam).flat(),
         player2_cards_won: totalCards,
         acquired_player_ids: updatedAcquiredIds,
-        last_activity_timestamp: Date.now
+        last_activity_timestamp: Date.now(),
+      },
+    })
+  },
+
+  markPlayerAsAcquired: (playerId: string) => {
+    const currentState = get().auctionState
+    if (!currentState) return
+    const currentAcquiredIds = currentState.acquired_player_ids || []
+    if (!currentAcquiredIds.includes(playerId)) {
+      set({
+        auctionState: {
+          ...currentState,
+          acquired_player_ids: [...currentAcquiredIds, playerId],
+          last_activity_timestamp: Date.now(),
+        },
+      })
+    }
+  },
+
+  isPlayerAcquired: (playerId: string) => {
+    const currentState = get().auctionState
+    if (!currentState || !currentState.acquired_player_ids) return false
+    return currentState.acquired_player_ids.includes(playerId)
+  },
+
+  setConnectionStatus: (status: ConnectionInfo['status']) => {
+    const info = get().connectionInfo
+    set({
+      connectionInfo: {
+        ...info,
+        status,
+        last_ping_at: status === 'connected' ? new Date().toISOString() : info.last_ping_at,
+      },
+    })
+  },
+
+  updateLatency: (latencyMs: number) => {
+    const info = get().connectionInfo
+    set({
+      connectionInfo: {
+        ...info,
+        latency_ms: latencyMs,
+        last_pong_at: new Date().toISOString(),
+      },
+    })
+  },
+
+  incrementReconnectionAttempts: () => {
+    const info = get().connectionInfo
+    set({
+      connectionInfo: {
+        ...info,
+        reconnection_attempts: info.reconnection_attempts + 1,
+      },
+    })
+  },
+
+  resetReconnectionAttempts: () => {
+    const info = get().connectionInfo
+    set({
+      connectionInfo: {
+        ...info,
+        reconnection_attempts: 0,
+      },
+    })
+  },
+
+  setBotState: (botInfo: BotInfo | null) => set({ botState: botInfo }),
+
+  updateBotBudget: (budget: number, cardsAcquired: number) => {
+    const bot = get().botState
+    if (!bot) return
+    set({
+      botState: {
+        ...bot,
+        budget: Math.max(0, budget),
+        cards_acquired: cardsAcquired,
+      },
+    })
+  },
+
+  addGameEvent: (type: string, message: string, data?: any) => {
+    const events = get().gameEvents
+    set({
+      gameEvents: [
+        ...events.slice(-99),
+        {
+          timestamp: new Date().toISOString(),
+          type,
+          message,
+          data,
+        },
+      ],
+    })
+  },
+
+  clearGameEvents: () => set({ gameEvents: [] }),
+
+  generateMysteryBox: (position: string) => {
+    const mysteryBox = generateMysteryBoxInternal(position)
+    const currentState = get().auctionState
+    if (currentState) {
+      set({
+        auctionState: {
+          ...currentState,
+          mystery_boxes: [...(currentState.mystery_boxes || []), mysteryBox],
+          last_activity_timestamp: Date.now(),
+        },
+      })
+    }
+    return mysteryBox
+  },
+
+  addMysteryBoxToPlayer: (playerId: 'player1' | 'player2', mysteryBox: MysteryBoxCard) => {
+    const currentState = get().auctionState
+    if (!currentState) return
+
+    const position = mysteryBox.position || 'DEF'
+    const card: Card = {
+      type: 'mystery_box',
+      is_mystery: true,
+      acquired_from: 'mystery_box',
+      name: mysteryBox.name,
+      position: mysteryBox.position,
+      rating: mysteryBox.rating,
+      rarity: mysteryBox.rarity,
+      image_url: mysteryBox.image_url,
+      card_id: mysteryBox.id,
+      mystery_rarity: mysteryBox.rarity,
+    }
+
+    if (playerId === 'player1') {
+      get().addCardToPlayer1Team(position, card)
+    } else {
+      get().addCardToPlayer2Team(position, card)
+    }
+  },
+
+  calculateMatchResult: (team1: any[], team2: any[], tactics1?: any, tactics2?: any) => {
+    const weights = get().auctionState?.match_weights || DEFAULT_MATCH_WEIGHTS
+    const result = calculateMatchResultInternal(team1, team2, tactics1 || {}, tactics2 || {}, weights)
+    set({ matchResult: result, gamePhase: 'completed' })
+    return result
+  },
+
+  setMatchWeights: (weights: { rating_weight: number; tactic_weight: number; momentum_weight: number }) => {
+    const currentState = get().auctionState
+    if (!currentState) return
+    set({
+      auctionState: {
+        ...currentState,
+        match_weights: weights,
+        last_activity_timestamp: Date.now(),
+      },
+    })
+  },
+
+  reset: () => set(createInitialState()),
+}))
