@@ -1,4 +1,4 @@
-# OSM FUT Dual Battle
+# OSM# OSM FUT Dual Battle
 
 A high-performance, real-time 1v1 tactical football auction game built with FastAPI, React, and WebSockets.
 
