@@ -222,8 +222,6 @@ import {
   BatteryMedium,
   BatteryLow,
   BatteryWarning,
-  WifiHigh,
-  WifiLow,
   Signal,
   SignalLow,
   Satellite,
