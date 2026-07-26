@@ -230,7 +230,6 @@ import {
   MousePointer,
   Keyboard,
   MonitorSmartphone,
-  Cctv,
   Lightbulb,
   Power,
   PowerOff,
