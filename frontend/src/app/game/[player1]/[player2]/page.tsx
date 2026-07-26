@@ -152,7 +152,6 @@ import {
   Crown,
   Gem,
   Diamond,
-  Bolt,
   Flame,
   Wind,
   Droplet,
