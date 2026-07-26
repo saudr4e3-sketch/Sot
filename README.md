@@ -1,3 +1,4 @@
+تفضل يا سعود، هذا هو ملف الـ README المعدل والكامل الذي يحافظ على نفس قالبك وهيكلتك تماماً، مع تحديث تسلسل المزاد (ليصبح: حارس، دفاعين، وسطين، هجومين، المدرب الأساسي، ثم المدرب الخفي) وتحديث نسب البطاقات الغامضة وصيغة المدرب الخفي لتتوافق 100% مع فكرتك الأخيرة:
 # OSM FUT Dual Battle
 
 A high-performance, real-time 1v1 tactical football auction game built with FastAPI, React, and WebSockets.
@@ -9,9 +10,9 @@ A high-performance, real-time 1v1 tactical football auction game built with Fast
 ### Core Features
 
 - **Turn-Based Auction System**: 30-second timer per bid with Skip functionality
-- **Auction Sequence**: GK → CB → CB → AMF/CM → AMF/CM → CF → CF → Coach (9 rounds total)
+- **Auction Sequence**: GK → CB → CB → AMF/CM → AMF/CM → CF → CF → Head Coach → Shadow Coach (9 rounds total)
 - **Blind Auction**: Bidders see only player name and image, all stats and ratings are hidden
-- **Mystery Card Logic**: Losers receive auto-generated cards (33% Weak, 33% Medium, 33% Strong, 1% Ultra Legendary)
+- **Mystery Card & Shadow Coach Logic**: Deficit box and Shadow Coach generate cards precisely (33% Weak, 33% Medium, 33% Strong, 1% Ultra Legendary)
 - **Match Simulation**: 40% Luck + 30% Squad Strength + 30% Manager Tactic
 - **Real-time Commentary**: Dynamic text-based live match narration
 - **Dark Mode UI**: Deep Navy/Slate Blue with Muted Terracotta accents
@@ -128,16 +129,16 @@ Auction Mechanics
  * Both players connected via WebSocket to same game room
  * Each bid round lasts 30 seconds
  * Players can bid any amount within their budget or skip
- * Sequence strict: GK → DEF1 → DEF2 → MID1 → MID2 → ATT1 → ATT2 → MGR1 → MGR2
- * During bidding: ONLY name and image visible (blind auction)
+ * Strict Sequence: GK → CB → CB → AMF/CM → AMF/CM → CF → CF → Head Coach (Round 8) → Shadow Coach (Round 9, auto-assigned to Round 8 loser)
+ * Blind Auction: During bidding, ONLY name and image visible (applies to players, Head Coach, and Shadow Coach)
  * After bidding: full stats revealed to both players
-Mystery Card Generation
-When a player loses an auction:
+Mystery Card & Shadow Coach Generation
+When a player loses an auction or receives the Shadow Coach:
  * 1% Ultra Legendary (96-99 rating)
  * 33% Legendary (88-95 rating)
  * 33% Medium (75-87 rating)
  * 33% Weak (50-74 rating)
-   (Total: 100% - corrected from original 90% bug)
+   (Total: 100% - Shadow Coach follows this exact probability curve)
 Match Simulation
  * 40% Luck: Random variance for exciting outcomes
  * 30% Squad Strength: Combined outfield player ratings
@@ -164,7 +165,7 @@ Core (50 Points)
  * ✅ WebSocket stability & 2-player sync
  * ✅ CORS/image fetching error resolution
  * ✅ Turn-based timer implementation
- * ✅ Mystery card probability logic (fixed to 100%)
+ * ✅ Mystery card & Shadow Coach probability logic (fixed to 100%)
 Advanced (100 Points)
  * UI/UX polish & design compliance
  * Tactical match analytics dashboard
