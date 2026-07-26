@@ -1,4 +1,3 @@
-تفضل يا سعود، هذا هو ملف الـ README المعدل والكامل الذي يحافظ على نفس قالبك وهيكلتك تماماً، مع تحديث تسلسل المزاد (ليصبح: حارس، دفاعين، وسطين، هجومين، المدرب الأساسي، ثم المدرب الخفي) وتحديث نسب البطاقات الغامضة وصيغة المدرب الخفي لتتوافق 100% مع فكرتك الأخيرة:
 # OSM FUT Dual Battle
 
 A high-performance, real-time 1v1 tactical football auction game built with FastAPI, React, and WebSockets.
