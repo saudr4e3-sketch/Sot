@@ -332,7 +332,6 @@ import {
   Grip,
   GripHorizontal,
   GripVertical,
-  Component,
   Container,
   Box,
   BoxSelect,
