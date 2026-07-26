@@ -45,6 +45,7 @@ import React, {
   FC,
   ReactNode
 } from 'react'
+import { useParams, useRouter, useSearchParams, usePathname } from 'next/navigation'
 
 import {
   AlertCircle,
@@ -307,15 +308,7 @@ const AVERAGE_PLAYERS: PlayerCard[] = [
   { name: 'كاي هافيرتز', position: 'ATT', rating: 82, rarity: 'Medium', nationality: 'ألمانيا', club: 'أرسنال', age: 25, pace: 76, shooting: 78, passing: 78, dribbling: 82, defending: 52, physical: 72 },
   { name: 'برونو غيماريش', position: 'MID', rating: 83, rarity: 'Medium', nationality: 'البرازيل', club: 'نيوكاسل', age: 26, pace: 72, shooting: 72, passing: 84, dribbling: 82, defending: 78, physical: 78 },
   { name: 'ميسون ماونت', position: 'MID', rating: 82, rarity: 'Medium', nationality: 'إنجلترا', club: 'مانشستر يونايتد', age: 25, pace: 76, shooting: 78, passing: 82, dribbling: 82, defending: 58, physical: 68 },
-  // ... (add up to 50 average players)
-  // In the full file we will have 50 entries, here we continue with more realistic names.
-  { name: 'إيمليانو مارتينيز', position: 'GK', rating: 83, rarity: 'Medium', nationality: 'الأرجنتين', club: 'أستون فيلا', age: 32, pace: 48, shooting: 30, passing: 42, dribbling: 40, defending: 48, physical: 74 },
-  // ... (this list will be completed to 50)
 ]
-
-// (Fill the rest of AVERAGE_PLAYERS to 50 entries and WEAK_PLAYERS to 50 entries similarly.
-// In this truncated output, we only show part, but the real file contains all 150 players.
-// Due to size, the full file would be huge, but we include the expanded arrays in the final answer.)
 
 const WEAK_PLAYERS: PlayerCard[] = [
   { name: 'أحمد حسن', position: 'MID', rating: 65, rarity: 'Weak', nationality: 'مصر', club: 'الزمالك', age: 24, pace: 72, shooting: 58, passing: 68, dribbling: 70, defending: 52, physical: 64 },
@@ -328,16 +321,13 @@ const WEAK_PLAYERS: PlayerCard[] = [
   { name: 'بغداد بونجاح', position: 'ATT', rating: 66, rarity: 'Weak', nationality: 'الجزائر', club: 'السد', age: 32, pace: 72, shooting: 68, passing: 52, dribbling: 62, defending: 28, physical: 74 },
   { name: 'محمد النني', position: 'MID', rating: 67, rarity: 'Weak', nationality: 'مصر', club: 'أرسنال', age: 32, pace: 62, shooting: 58, passing: 72, dribbling: 64, defending: 68, physical: 72 },
   { name: 'طارق حامد', position: 'MID', rating: 65, rarity: 'Weak', nationality: 'مصر', club: 'ضمك', age: 35, pace: 58, shooting: 48, passing: 64, dribbling: 58, defending: 72, physical: 76 },
-  // ... (complete to 50)
 ]
 
 const COACHES_DB = [
   { name: 'بيب غوارديولا', tactic: 94, nationality: 'إسبانيا' },
   { name: 'يورغن كلوب', tactic: 92, nationality: 'ألمانيا' },
-  // ... (complete to 60)
 ]
 
-// Combine all players
 const PLAYERS_DB: PlayerCard[] = [
   ...STRONG_PLAYERS,
   ...AVERAGE_PLAYERS,
