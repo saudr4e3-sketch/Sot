@@ -280,7 +280,6 @@ import {
   Projector,
   Tv,
   RadioReceiver,
-  HeadphoneIcon,
   Gamepad2,
   Folder,
   FolderOpen,
