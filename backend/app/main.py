@@ -79,12 +79,23 @@ except ImportError:
 
 # ==================== استيراد نظام المزاد ====================
 try:
-    from auction import OSMDualBattle, AUCTION_POSITIONS, POSITION_DISPLAY
+    # استيراد واضح ضمن حزمة التطبيق
+    from app.game.auction import OSMDualBattle, AUCTION_POSITIONS, POSITION_DISPLAY
     GAME_AVAILABLE = True
-except ImportError:
-    GAME_AVAILABLE = False
-    print("FATAL: auction.py not found. System cannot start.")
-    sys.exit(1)
+except Exception:
+    try:
+        # محاولة استيراد نسبي إذا شُغل الملف بشكل مستقل
+        from .game.auction import OSMDualBattle, AUCTION_POSITIONS, POSITION_DISPLAY
+        GAME_AVAILABLE = True
+    except Exception as e:
+        GAME_AVAILABLE = False
+        # استخدام logger لو كان معدًّا لاحقًا
+        try:
+            logging.getLogger("main").error("FATAL: auction module not found: %s", e)
+        except Exception:
+            pass
+        print("FATAL: auction module not found. System cannot start.")
+        sys.exit(1)
 
 # ==================== إعداد التسجيل المتقدم ====================
 LOG_FORMAT = (
@@ -426,7 +437,7 @@ class CreateSessionRequest(BaseModel):
 security = HTTPBearer(auto_error=False)
 
 async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """مصادقة بسيطة (يمكن توسيعها)"""
+    """مصادقة بسيطة (��مكن توسيعها)"""
     if credentials:
         # يمكن التحقق من JWT هنا
         # token = credentials.credentials
@@ -576,7 +587,8 @@ async def general_handler(request: Request, exc):
     )
 
 # ==================== Static Files ====================
-STATIC_DIR = Path("app/static")
+# جعل مسار static مرنًا بناءً على موقع الملف الحالي
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -593,37 +605,6 @@ async def root():
 @app.get("/health", tags=["Monitoring"])
 async def health():
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
-
-@app.get("/api/status", tags=["Monitoring"])
-async def detailed_status():
-    uptime_seconds = (datetime.now(timezone.utc) - SERVER_INFO["start_time"]).total_seconds() if SERVER_INFO["start_time"] else 0
-    memory_info = {}
-    try:
-        import psutil
-        mem = psutil.virtual_memory()
-        memory_info = {"total_gb": round(mem.total/1e9,1), "used_percent": mem.percent}
-    except:
-        pass
-    
-    return {
-        "success": True,
-        "data": {
-            "server": SERVER_INFO,
-            "uptime_seconds": uptime_seconds,
-            "performance": {
-                "total_requests": PERFORMANCE_METRICS["total_requests"],
-                "total_errors": PERFORMANCE_METRICS["total_errors"],
-                "websocket_messages": PERFORMANCE_METRICS["websocket_messages"],
-                "endpoints": {k: {"count": v["count"], "avg_ms": round(v["total_time"]/v["count"]*1000,2) if v["count"] else 0} for k,v in PERFORMANCE_METRICS["endpoints"].items()}
-            },
-            "resources": {"memory": memory_info},
-            "storage": {"type": type(storage).__name__, "sessions_count": len(await storage.list_keys())}
-        }
-    }
-
-@app.get("/api/ping", tags=["Monitoring"])
-async def ping():
-    return {"ping": "pong", "time": time.time()}
 
 # ==================== مسار تاريخ المباريات ====================
 @app.get("/api/matches/history", tags=["Matches"])
@@ -661,7 +642,8 @@ async def match_history(
     }
 
 # ==================== WebSocket ====================
-@app.websocket("/ws/{session_id}")
+# توحيد مسار الـ WebSocket ليتطابق مع الـ frontend
+@app.websocket("/api/ws/{session_id}")
 async def ws_endpoint(websocket: WebSocket, session_id: str):
     await ws_manager.connect(session_id, websocket)
     try:
@@ -701,6 +683,7 @@ async def list_sessions():
         }
     }
 
+# ==================== بقية المسارات كما كانت ====================
 @app.delete("/session/{session_id}", tags=["Sessions"])
 async def delete_session(session_id: str):
     if session_id in game.active_auctions:
@@ -772,8 +755,10 @@ if __name__ == "__main__":
     workers = int(os.environ.get("WORKERS", 1))
     
     logger.info(f"🚀 Starting Uvicorn on {host}:{port}")
+    # استخدام مرجع تطبيق مناسب للنشر على Render
+    uvicorn_target = "app.main:app"
     uvicorn.run(
-        "main:app" if not debug else app,
+        uvicorn_target if not debug else app,
         host=host,
         port=port,
         workers=workers,
