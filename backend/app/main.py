@@ -89,7 +89,7 @@ except Exception:
         GAME_AVAILABLE = True
     except Exception as e:
         GAME_AVAILABLE = False
-        # استخدام logger لو كان معدًّا لاحقًا
+        # استخدام logger لو كان معدًّا لاحقًا
         try:
             logging.getLogger("main").error("FATAL: auction module not found: %s", e)
         except Exception:
@@ -394,7 +394,6 @@ class AdvancedWebSocketManager:
             self.disconnect(session_id, ws)
             
     async def send_to_player(self, session_id: str, player_id: str, message: dict):
-        # في النظام الحالي، جميع المتصلين بالجلسة يستقبلون الرسائل
         await self.broadcast(session_id, message)
         
     def _count_all(self):
@@ -437,23 +436,18 @@ class CreateSessionRequest(BaseModel):
 security = HTTPBearer(auto_error=False)
 
 async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """مصادقة بسيطة (��مكن توسيعها)"""
     if credentials:
-        # يمكن التحقق من JWT هنا
-        # token = credentials.credentials
         pass
     return True
 
 # ==================== دورة حياة التطبيق ====================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # بدء التشغيل
     startup_start = time.time()
     logger.info("=" * 60)
     logger.info("🎮 OSM FUT Dual Battle Server Starting...")
     SERVER_INFO["start_time"] = datetime.now(timezone.utc)
     
-    # استعادة الجلسات
     try:
         keys = await storage.list_keys()
         for key in keys:
@@ -464,7 +458,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Session restoration error: {e}")
     
-    # بدء مهمة heartbeat
     heartbeat_task = asyncio.create_task(ws_manager.start_heartbeat())
     
     startup_duration = time.time() - startup_start
@@ -473,7 +466,6 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # إيقاف التشغيل
     logger.info("🛑 Server shutting down...")
     heartbeat_task.cancel()
     try:
@@ -481,9 +473,8 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     
-    # حفظ الجلسات
     for session_id, auction in game.active_auctions.items():
-        state = auction.get_state()
+        state = auction.get_state() if hasattr(auction, 'get_state') else auction
         await storage.save(session_id, state)
     for session_id, data in game.completed_auctions.items():
         await storage.save(session_id, data)
@@ -539,9 +530,6 @@ async def global_middleware(request: Request, call_next):
         PERFORMANCE_METRICS["endpoints"][path]["count"] += 1
         PERFORMANCE_METRICS["endpoints"][path]["total_time"] += process_time
         
-        if process_time > 1.0:
-            logger.warning(f"⚠️ Slow request [{request_id}]: {request.method} {path} ({process_time:.3f}s)")
-        
         return response
     except Exception as e:
         SERVER_INFO["errors_encountered"] += 1
@@ -587,7 +575,6 @@ async def general_handler(request: Request, exc):
     )
 
 # ==================== Static Files ====================
-# جعل مسار static مرنًا بناءً على موقع الملف الحالي
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -614,14 +601,10 @@ async def match_history(
     sort: str = Query("desc", regex="^(asc|desc)$"),
     player_id: Optional[str] = Query(None)
 ):
-    """جلب سجل المباريات مع ترقيم الصفحات"""
     history = game.get_match_history(limit + offset)
-    
-    # تصفية حسب اللاعب (اختياري)
     if player_id:
         history = [m for m in history if m.get("team1_info",{}).get("player_id") == player_id or m.get("team2_info",{}).get("player_id") == player_id]
     
-    # ترتيب
     if sort == "desc":
         history = sorted(history, key=lambda x: x.get("played_at", 0), reverse=True)
     else:
@@ -642,7 +625,6 @@ async def match_history(
     }
 
 # ==================== WebSocket ====================
-# توحيد مسار الـ WebSocket ليتطابق مع الـ frontend
 @app.websocket("/api/ws/{session_id}")
 async def ws_endpoint(websocket: WebSocket, session_id: str):
     await ws_manager.connect(session_id, websocket)
@@ -654,9 +636,7 @@ async def ws_endpoint(websocket: WebSocket, session_id: str):
                 state = game.get_auction_state(session_id)
                 await websocket.send_json({"type": "state_update", "data": state})
             elif action == "pong":
-                # استجابة للـ heartbeat
                 pass
-            # يمكن إضافة إجراءات أخرى
     except WebSocketDisconnect:
         ws_manager.disconnect(session_id, websocket)
     except Exception as e:
@@ -666,9 +646,19 @@ async def ws_endpoint(websocket: WebSocket, session_id: str):
 # ==================== API الجلسات ====================
 @app.post("/session", tags=["Sessions"])
 async def create_session(request: CreateSessionRequest):
-    data = game.create_session(request.player_id)
-    await storage.save(data["session_id"], {"status": "active", "created_at": time.time()})
-    return {"success": True, "data": data}
+    try:
+        data = game.create_session(request.player_id)
+        sid = data.get("session_id")
+        await storage.save(sid, {"status": "active", "created_at": time.time(), **data})
+        # إرجاع الاستجابة متوافقة بالكامل مع ما يتوقعه الفرونت إند
+        return {
+            "success": True,
+            "session_id": sid,
+            "data": data
+        }
+    except Exception as e:
+        error_logger.error(f"Create session error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/sessions", tags=["Sessions"])
 async def list_sessions():
@@ -683,7 +673,6 @@ async def list_sessions():
         }
     }
 
-# ==================== بقية المسارات كما كانت ====================
 @app.delete("/session/{session_id}", tags=["Sessions"])
 async def delete_session(session_id: str):
     if session_id in game.active_auctions:
@@ -706,8 +695,8 @@ async def start_auction(session_id: str):
 @app.post("/session/{session_id}/bid", tags=["Auction"])
 async def place_bid(session_id: str, bid: BidRequest):
     result = game.place_bid(session_id, bid.player_id, bid.amount)
-    if not result["success"]:
-        raise HTTPException(status_code=400, detail=result["result"].get("error","فشل العرض"))
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("result", {}).get("error", "فشل العرض"))
     state = game.get_auction_state(session_id)
     await ws_manager.broadcast(session_id, {"type": "bid_placed", "data": state})
     await storage.save(session_id, state)
@@ -716,8 +705,8 @@ async def place_bid(session_id: str, bid: BidRequest):
 @app.post("/session/{session_id}/skip", tags=["Auction"])
 async def skip_turn(session_id: str, skip: SkipRequest):
     result = game.skip_turn(session_id, skip.player_id)
-    if not result["success"]:
-        raise HTTPException(status_code=400, detail=result["result"].get("error","فشل التخطي"))
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail="فشل التخطي")
     state = game.get_auction_state(session_id)
     await ws_manager.broadcast(session_id, {"type": "turn_skipped", "data": state})
     await storage.save(session_id, state)
@@ -755,7 +744,6 @@ if __name__ == "__main__":
     workers = int(os.environ.get("WORKERS", 1))
     
     logger.info(f"🚀 Starting Uvicorn on {host}:{port}")
-    # استخدام مرجع تطبيق مناسب للنشر على Render
     uvicorn_target = "app.main:app"
     uvicorn.run(
         uvicorn_target if not debug else app,
