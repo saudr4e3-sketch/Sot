@@ -4,10 +4,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 
 const WS_PATH = (base: string, sessionId: string) => {
-  // normalize NEXT_PUBLIC_WS_URL to ws:// or wss://
   if (!base) return `ws://localhost:8000/api/ws/${sessionId}`;
   if (base.startsWith('ws://') || base.startsWith('wss://')) return `${base.replace(/\/+$/,'')}/api/ws/${sessionId}`;
-  // base might be http(s)
   if (base.startsWith('https://')) return `wss://${base.replace(/^https:\/\//,'').replace(/\/+$/,'')}/api/ws/${sessionId}`;
   if (base.startsWith('http://')) return `ws://${base.replace(/^http:\/\//,'').replace(/\/+$/,'')}/api/ws/${sessionId}`;
   return `ws://${base}/api/ws/${sessionId}`;
@@ -15,7 +13,6 @@ const WS_PATH = (base: string, sessionId: string) => {
 
 function formatMoney(val?: number | null) {
   if (!val && val !== 0) return '0M';
-  // show as integer with M suffix
   return `${Math.round(val)}M`;
 }
 
@@ -32,7 +29,6 @@ export default function GamePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Bid input (numeric, in Millions)
   const [bidInput, setBidInput] = useState<string>('');
   const [secondsLeft, setSecondsLeft] = useState<number>(30);
   const [isConnected, setIsConnected] = useState(false);
@@ -48,7 +44,7 @@ export default function GamePage() {
         body: JSON.stringify({ player_id: player1 }),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data?.detail || 'Failed to create session');
+      if (!resp.ok) throw new Error(data?.detail || 'فشل إنشاء الجلسة');
       const sid = data?.data?.session_id || data?.session_id || data?.data?.sessionId || data?.sessionId;
       setSessionId(sid);
       setLoading(false);
@@ -62,7 +58,6 @@ export default function GamePage() {
   }, [API_BASE, player1]);
 
   useEffect(() => {
-    // initialize
     if (!player1) {
       setError('معرّف اللاعب غير مُحدد');
       setLoading(false);
@@ -73,22 +68,16 @@ export default function GamePage() {
       const sid = await createSession();
       if (!sid || !mounted) return;
 
-      // connect websocket
       const wsUrl = WS_PATH(WS_BASE, sid);
       try {
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
-        ws.onopen = () => {
-          setIsConnected(true);
-        };
+        ws.onopen = () => setIsConnected(true);
         ws.onmessage = (ev) => {
           try {
             const msg = JSON.parse(ev.data);
-            if (msg?.type === 'connected') {
-              // ignore
-            } else if (msg?.type === 'state_update') {
+            if (msg?.type === 'state_update') {
               const newState = msg.data;
-              // reset timer if highest bid increased or auction started
               const prev = prevHighestRef.current || 0;
               const newHighest = Number(newState?.highest_bid || 0);
               if (newHighest > prev) {
@@ -97,16 +86,18 @@ export default function GamePage() {
               }
               prevHighestRef.current = newHighest;
               setGameState(newState);
-            } else if (msg?.type === 'auction_started' || msg?.type === 'bid_placed' || msg?.type === 'turn_skipped' || msg?.type === 'match_result') {
-              // fetch latest state
-              fetch(`${API_BASE}/session/${sid}/state`).then(r=>r.json()).then(j=>{
-                const s = j?.data || j;
-                const newHighest = Number(s?.highest_bid || 0);
-                prevHighestRef.current = newHighest;
-                setGameState(s);
-                setSecondsLeft(30);
-                expiryHandledRef.current = false;
-              }).catch(()=>null);
+            } else if (['auction_started', 'bid_placed', 'turn_skipped', 'match_result'].includes(msg?.type)) {
+              fetch(`${API_BASE}/session/${sid}/state`)
+                .then((r) => r.json())
+                .then((j) => {
+                  const s = j?.data || j;
+                  const newHighest = Number(s?.highest_bid || 0);
+                  prevHighestRef.current = newHighest;
+                  setGameState(s);
+                  setSecondsLeft(30);
+                  expiryHandledRef.current = false;
+                })
+                .catch(() => null);
             }
           } catch (e) {
             console.error('ws message parse', e);
@@ -114,52 +105,49 @@ export default function GamePage() {
         };
         ws.onclose = () => {
           setIsConnected(false);
-          // auto-reconnect with exponential backoff
-          setTimeout(()=>{
+          setTimeout(() => {
             if (wsRef.current !== ws) return;
-            // try reconnect by creating new ws if still same sessionId
             if (sessionId) {
               const newWs = new WebSocket(WS_PATH(WS_BASE, sessionId));
               wsRef.current = newWs;
             }
           }, 2000);
         };
-        ws.onerror = (e) => {
-          console.error('WebSocket error', e);
-        };
+        ws.onerror = (e) => console.error('WebSocket error', e);
       } catch (e) {
         console.error('WS connection failed', e);
       }
     })();
 
-    return () => { mounted = false; if (wsRef.current) { try { wsRef.current.close(); } catch(e){} }};
+    return () => {
+      mounted = false;
+      if (wsRef.current) {
+        try { wsRef.current.close(); } catch (e) {}
+      }
+    };
   }, [player1, createSession, WS_BASE, API_BASE, sessionId]);
 
-  // Timer effect
   useEffect(() => {
     if (!gameState) return;
-    setSecondsLeft(30); // reset when fresh state arrives
+    setSecondsLeft(30);
     expiryHandledRef.current = false;
   }, [gameState?.current_turn]);
 
   useEffect(() => {
     if (!gameState) return;
     const tick = setInterval(() => {
-      setSecondsLeft(prev => {
+      setSecondsLeft((prev) => {
         if (prev <= 1) {
-          // handle expiry once
           if (!expiryHandledRef.current) {
             expiryHandledRef.current = true;
-            // call skip for current player
             (async () => {
               try {
                 const cur = gameState.current_turn;
                 await fetch(`${API_BASE}/session/${sessionId}/skip`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ player_id: cur })
+                  body: JSON.stringify({ player_id: cur }),
                 });
-                // fetch updated state
                 const r = await fetch(`${API_BASE}/session/${sessionId}/state`);
                 const j = await r.json();
                 setGameState(j?.data || j);
@@ -186,13 +174,13 @@ export default function GamePage() {
       });
       const j = await resp.json();
       if (!resp.ok) throw new Error(j?.detail || j?.message || 'فشل في تقديم العرض');
-      // optimistic: update state
       const stateResp = await fetch(`${API_BASE}/session/${sessionId}/state`);
       const stateJson = await stateResp.json();
       setGameState(stateJson?.data || stateJson);
       setBidInput('');
       setSecondsLeft(30);
       expiryHandledRef.current = false;
+      setError(null);
     } catch (e: any) {
       console.error('bid error', e);
       setError(e.message || 'فشل في تقديم العرض');
@@ -219,16 +207,23 @@ export default function GamePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center" dir="rtl">
-        <div className="text-xl font-bold animate-pulse">جاري تحميل ساحة المزاد... ⚽</div>
+      <div className="min-h-screen bg-neutral-950 flex flex-col items-center justify-center gap-4 text-white" dir="rtl">
+        <div className="relative w-16 h-16">
+          <div className="absolute inset-0 rounded-full border-4 border-amber-500/20 animate-ping"></div>
+          <div className="w-16 h-16 rounded-full border-4 border-t-amber-400 border-r-transparent border-b-transparent border-l-transparent animate-spin"></div>
+        </div>
+        <p className="text-lg font-bold tracking-wide text-zinc-300">جاري الدخول إلى غرفة المزاد...</p>
       </div>
     );
   }
 
-  if (error) {
+  if (error && !gameState) {
     return (
-      <div className="min-h-screen bg-black text-red-500 flex items-center justify-center" dir="rtl">
-        <div>خطأ: {error}</div>
+      <div className="min-h-screen bg-neutral-950 text-rose-500 flex items-center justify-center p-4" dir="rtl">
+        <div className="bg-rose-950/40 border border-rose-800/60 p-6 rounded-2xl max-w-md text-center">
+          <h2 className="text-xl font-bold mb-2">تعذر الاتصال بالساحة</h2>
+          <p className="text-sm text-rose-300/80">{error}</p>
+        </div>
       </div>
     );
   }
@@ -236,114 +231,223 @@ export default function GamePage() {
   const highest = Number(gameState?.highest_bid || 0);
   const currentTurn = gameState?.current_turn || player1;
   const isMyTurn = currentTurn === player1;
+  const card = gameState?.current_card;
+  const timerPercent = (secondsLeft / 30) * 100;
 
   const quickBid = (inc: number) => {
     const base = highest > 0 ? highest : 0;
-    const target = Math.round(base + inc);
-    sendBid(target);
+    sendBid(Math.round(base + inc));
   };
 
   const onConfirmBid = () => {
     const v = Number(bidInput.replace(/[^0-9.]/g, ''));
     if (!v || v <= highest) {
-      setError('الرجاء إدخال مبلغ أعلى من أعلى عرض حالي');
+      setError('يجب أن تكون المزايدة أعلى من السعر الحالي');
       return;
     }
     sendBid(v);
   };
 
   return (
-    <main className="min-h-screen bg-black text-white p-4 md:p-8" dir="rtl">
-      <div className="max-w-6xl mx-auto">
-        <header className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
-          <h1 className="text-3xl font-extrabold text-white">OSM FUT Dual Battle 🎮</h1>
-          <div className="text-sm px-4 py-2 rounded-xl border border-slate-800 bg-[linear-gradient(180deg,#0b0b0b, #070707)] shadow-lg">
-            الخصوم: <span className="text-amber-400 font-bold mr-2">{player1}</span> vs <span className="text-emerald-400 font-bold ml-2">{player2}</span>
+    <main className="min-h-screen bg-[#07090e] text-white selection:bg-amber-500 selection:text-black font-sans pb-12" dir="rtl">
+      {/* Top Navbar */}
+      <nav className="border-b border-zinc-800/80 bg-zinc-950/60 backdrop-blur-md sticky top-0 z-40 px-4 lg:px-8 py-3.5">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-[0_0_10px_#f59e0b]"></span>
+            <span className="font-black text-xl tracking-wider uppercase bg-gradient-to-r from-amber-400 via-amber-200 to-yellow-500 bg-clip-text text-transparent">
+              OSM FUT Battle
+            </span>
           </div>
-        </header>
 
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left panel */}
-          <aside className="bg-[#050505] border border-[#111111] rounded-2xl p-5 shadow-[0_10px_30px_#00000080]">
-            <h2 className="text-lg font-bold mb-4 text-amber-400">إحصائيات الفريق</h2>
-            <div className="space-y-3 text-slate-300">
-              <div className="flex justify-between bg-transparent p-3 rounded-xl border border-[#111111]">
-                <span>متقييم الفريق (OVR):</span>
-                <span className="font-bold text-emerald-400">{gameState?.teams?.player1?.total_power ?? '—'}</span>
+          <div className="flex items-center gap-3 bg-zinc-900/90 border border-zinc-800 px-4 py-1.5 rounded-full text-xs font-semibold shadow-inner">
+            <span className="text-amber-400 font-bold">{player1}</span>
+            <span className="text-zinc-500 font-black italic">VS</span>
+            <span className="text-cyan-400 font-bold">{player2 || 'الخصم'}</span>
+            <span className={`w-2 h-2 rounded-full mr-1 ${isConnected ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-rose-500'}`} />
+          </div>
+        </div>
+      </nav>
+
+      <div className="max-w-7xl mx-auto px-4 lg:px-8 pt-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* Left Side: Match Context & Stats */}
+        <aside className="lg:col-span-4 space-y-6 order-2 lg:order-1">
+          {/* Team Power Overview */}
+          <div className="bg-gradient-to-b from-zinc-900/80 to-zinc-950/80 border border-zinc-800/80 rounded-3xl p-6 shadow-xl backdrop-blur-sm">
+            <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-400 mb-4 flex items-center gap-2">
+              <span className="w-1.5 h-3 bg-amber-400 rounded-full"></span>
+              بيانات النادي
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-zinc-900/50 border border-zinc-800/60 p-4 rounded-2xl">
+                <span className="text-xs text-zinc-500 block mb-1">تقييم الفريق (OVR)</span>
+                <span className="text-3xl font-black text-emerald-400">{gameState?.teams?.player1?.total_power ?? '—'}</span>
               </div>
-              <div className="flex justify-between bg-transparent p-3 rounded-xl border border-[#111111]">
-                <span>الميزانية المتبقية:</span>
-                <span className="font-bold text-amber-400">{gameState?.bot_info?.remaining_budget ? formatMoney(gameState.bot_info.remaining_budget) : '—'}</span>
+              <div className="bg-zinc-900/50 border border-zinc-800/60 p-4 rounded-2xl">
+                <span className="text-xs text-zinc-500 block mb-1">الميزانية المتاحة</span>
+                <span className="text-3xl font-black text-amber-400">
+                  {gameState?.bot_info?.remaining_budget ? formatMoney(gameState.bot_info.remaining_budget) : '100M'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Live Action Feed */}
+          <div className="bg-gradient-to-b from-zinc-900/80 to-zinc-950/80 border border-zinc-800/80 rounded-3xl p-6 shadow-xl backdrop-blur-sm">
+            <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-400 mb-4 flex items-center gap-2">
+              <span className="w-1.5 h-3 bg-cyan-400 rounded-full"></span>
+              سجل أحداث المزاد
+            </h3>
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1 text-xs">
+              {Array.isArray(gameState?.auction_log) && gameState.auction_log.length > 0 ? (
+                gameState.auction_log.slice().reverse().map((ev: any, idx: number) => (
+                  <div key={idx} className="flex justify-between items-center bg-zinc-950/50 border border-zinc-800/40 px-3 py-2.5 rounded-xl">
+                    <span className="text-zinc-300 font-medium">{ev.player ?? ev.winner ?? 'لاعب'}: {ev.action}</span>
+                    <span className="font-bold text-amber-400">{ev.amount ? formatMoney(ev.amount) : '—'}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-zinc-600">بانتظار حركة المزايدات...</div>
+              )}
+            </div>
+          </div>
+        </aside>
+
+        {/* Right Side: FUT Card Display & Bidding Arena */}
+        <section className="lg:col-span-8 space-y-6 order-1 lg:order-2">
+          {/* Main Card Arena */}
+          <div className="relative bg-gradient-to-b from-zinc-900/60 via-zinc-950/90 to-zinc-950 border border-zinc-800/80 rounded-3xl p-6 lg:p-8 shadow-2xl overflow-hidden">
+            {/* Ambient Lighting */}
+            <div className="absolute top-0 right-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+            {/* Header: Turn status & Timer bar */}
+            <div className="relative z-10 flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-zinc-800/60">
+              <div className="flex items-center gap-3">
+                <div className={`px-4 py-1.5 rounded-full text-xs font-black tracking-wider uppercase flex items-center gap-2 ${
+                  isMyTurn ? 'bg-amber-400 text-black shadow-[0_0_15px_#f59e0b80]' : 'bg-zinc-800 text-zinc-400'
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${isMyTurn ? 'bg-black animate-pulse' : 'bg-zinc-500'}`} />
+                  {isMyTurn ? 'دورك للمزايدة' : `الدور: ${currentTurn}`}
+                </div>
               </div>
 
-              <div className="mt-4">
-                <div className="text-xs text-slate-500 mb-1">الاتصال:</div>
-                <div className="text-sm font-medium">
-                  {isConnected ? <span className="text-emerald-400">متصل</span> : <span className="text-rose-500">غير متصل</span>}
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <span className="text-[10px] uppercase text-zinc-500 block font-bold">الوقت المتبقي</span>
+                  <span className={`text-2xl font-black ${secondsLeft <= 5 ? 'text-rose-500 animate-bounce' : 'text-zinc-200'}`}>
+                    00:{secondsLeft < 10 ? `0${secondsLeft}` : secondsLeft}
+                  </span>
                 </div>
               </div>
             </div>
-          </aside>
 
-          {/* Main auction panel */}
-          <div className="lg:col-span-2 bg-[#040404] border border-[#111111] rounded-2xl p-6 shadow-[0_20px_50px_#000000b0] flex flex-col">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="inline-block px-4 py-1 bg-amber-500/10 text-amber-400 rounded-full text-sm font-semibold mb-2">جولة المزاد الحالية</div>
-                <h3 className="text-3xl font-extrabold mb-1">{gameState?.current_card?.name ?? 'بطاقة غير محددة'}</h3>
-                <div className="text-slate-400 text-sm">الموقع: {gameState?.current_card?.display_position ?? '—'}</div>
-              </div>
-
-              <div className="text-right">
-                <div className="text-xs text-slate-500">الدور الحالي</div>
-                <div className="text-lg font-bold text-white">{currentTurn}</div>
-                <div className="mt-3 text-xs text-slate-400">العداد:</div>
-                <div className="text-2xl font-extrabold text-amber-400">{secondsLeft}s</div>
-              </div>
+            {/* Timer Progress Bar */}
+            <div className="w-full h-1.5 bg-zinc-800 rounded-full mt-4 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-1000 ease-linear ${
+                  secondsLeft <= 5 ? 'bg-rose-500 shadow-[0_0_8px_#f43f5e]' : 'bg-amber-400 shadow-[0_0_8px_#f59e0b]'
+                }`}
+                style={{ width: `${timerPercent}%` }}
+              />
             </div>
 
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-              <div className="space-y-3">
-                <div className="text-sm text-slate-400">أعلى عرض حالي</div>
-                <div className="text-4xl font-extrabold text-emerald-400">{formatMoney(highest)}</div>
+            {/* Center Stage: FUT Card + Price Panel */}
+            <div className="relative z-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+              {/* FIFA Ultimate Team Card Mock */}
+              <div className="flex justify-center">
+                <div className="relative w-64 h-96 rounded-3xl bg-gradient-to-tr from-amber-600 via-yellow-200 to-amber-700 p-1 shadow-[0_20px_40px_rgba(0,0,0,0.8)] transform hover:scale-105 transition-transform duration-300">
+                  <div className="w-full h-full bg-[#0c0d12] rounded-[22px] flex flex-col justify-between p-5 border border-yellow-500/40 relative overflow-hidden">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-amber-500/20 via-transparent to-transparent"></div>
 
-                <div className="mt-4 flex items-center gap-3">
-                  <input
-                    aria-label="amount"
-                    inputMode="numeric"
-                    value={bidInput}
-                    onChange={(e) => setBidInput(e.target.value)}
-                    placeholder={String(highest + 1)}
-                    className="w-40 bg-[#060606] border border-[#222222] rounded-xl px-4 py-2 text-white placeholder:text-slate-500"
-                  />
-                  <button onClick={onConfirmBid} className={`px-4 py-2 rounded-xl font-bold ${isMyTurn ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-slate-800 cursor-not-allowed'} text-white`}>تأكيد العرض</button>
-
-                  <button onClick={doSkip} className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-semibold">سكب</button>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-3">
-                  <button onClick={() => quickBid(10)} className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600">+10M</button>
-                  <button onClick={() => quickBid(20)} className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600">+20M</button>
-                  <button onClick={() => quickBid(50)} className="px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-600">+50M</button>
-                </div>
-
-                {error && <div className="mt-3 text-rose-400">{error}</div>}
-              </div>
-
-              <div className="bg-[#070707] border border-[#111111] rounded-2xl p-4">
-                <div className="text-sm text-slate-400 mb-2">سجل المزاد (آخر الأحداث)</div>
-                <div className="max-h-40 overflow-auto text-slate-300 text-sm">
-                  {Array.isArray(gameState?.auction_log) && gameState.auction_log.slice().reverse().map((ev: any, idx: number) => (
-                    <div key={idx} className="py-1 border-b border-[#0e0e0e]">
-                      <div className="text-xs text-slate-500">{new Date((ev.timestamp || Date.now())*1000).toLocaleTimeString()}</div>
-                      <div className="text-sm">{ev.action} — {ev.player ?? ev.winner ?? ''} {ev.amount ? `: ${formatMoney(ev.amount)}` : ''}</div>
+                    {/* Top Stats */}
+                    <div className="relative z-10 flex justify-between items-start">
+                      <div>
+                        <div className="text-4xl font-black text-amber-300 tracking-tighter">
+                          {card?.rating || card?.overall || '89'}
+                        </div>
+                        <div className="text-xs font-black uppercase tracking-widest text-zinc-400">
+                          {card?.display_position || card?.position || 'ST'}
+                        </div>
+                      </div>
+                      <div className="text-2xl font-extrabold text-amber-500/40">FUT</div>
                     </div>
-                  ))}
+
+                    {/* Center Placeholder / Icon */}
+                    <div className="relative z-10 text-center my-auto">
+                      <div className="w-24 h-24 mx-auto rounded-full border-2 border-dashed border-amber-500/30 flex items-center justify-center text-4xl mb-2">
+                        ⚽
+                      </div>
+                      <h4 className="text-xl font-black tracking-wide text-white drop-shadow-md">
+                        {card?.name ?? 'بطاقة سرية'}
+                      </h4>
+                    </div>
+
+                    {/* Card Footer */}
+                    <div className="relative z-10 pt-3 border-t border-zinc-800 text-center">
+                      <span className="text-[10px] tracking-widest uppercase text-amber-400/80 font-bold">Dual Arena Edition</span>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="mt-6 text-xs text-slate-500">ملاحظة: يدعم النظام إعادة ضبط العداد إلى 30s عند تقديم مزايدة ناجحة.</div>
+              {/* Price & Action Section */}
+              <div className="flex flex-col justify-center space-y-6">
+                <div>
+                  <span className="text-xs uppercase font-extrabold tracking-widest text-zinc-500 block mb-1">أعلى عرض قائم</span>
+                  <div className="text-5xl font-black bg-gradient-to-r from-emerald-400 to-teal-200 bg-clip-text text-transparent">
+                    {formatMoney(highest)}
+                  </div>
+                </div>
+
+                {/* Quick Add Buttons */}
+                <div className="space-y-2">
+                  <span className="text-xs font-semibold text-zinc-400">مزايدة سريعة فوق السعر:</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[10, 20, 50].map((amt) => (
+                      <button
+                        key={amt}
+                        onClick={() => quickBid(amt)}
+                        disabled={!isMyTurn}
+                        className="py-2.5 rounded-xl border border-zinc-700/80 bg-zinc-900/60 hover:bg-amber-400 hover:text-black hover:border-amber-400 font-bold transition-all duration-200 active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+                      >
+                        +{amt}M
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Custom Bid & Skip Actions */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex gap-2">
+                    <input
+                      aria-label="amount"
+                      inputMode="numeric"
+                      value={bidInput}
+                      onChange={(e) => setBidInput(e.target.value)}
+                      placeholder={`أعلى من ${highest}`}
+                      className="w-full bg-zinc-950 border border-zinc-700/60 rounded-xl px-4 text-center font-bold text-lg text-white focus:outline-none focus:border-amber-400"
+                    />
+                    <button
+                      onClick={onConfirmBid}
+                      disabled={!isMyTurn}
+                      className="px-6 py-3 rounded-xl font-black bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_#10b98140] transition-all duration-200 active:scale-95 disabled:opacity-30 disabled:pointer-events-none whitespace-nowrap"
+                    >
+                      مزايدة
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={doSkip}
+                    disabled={!isMyTurn}
+                    className="w-full py-2.5 rounded-xl font-bold bg-zinc-900/80 hover:bg-rose-950/50 hover:text-rose-400 border border-zinc-800 hover:border-rose-800 transition-all duration-200 active:scale-95 disabled:opacity-30 disabled:pointer-events-none text-zinc-400"
+                  >
+                    تخطي الدور (Skip)
+                  </button>
+                </div>
+
+                {error && <div className="text-xs text-rose-400 bg-rose-950/30 border border-rose-800/40 p-2.5 rounded-xl text-center">{error}</div>}
+              </div>
+            </div>
           </div>
         </section>
       </div>
