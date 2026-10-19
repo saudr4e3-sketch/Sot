@@ -3,14 +3,38 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 
-// Build WS path matching backend handler: /api/ws/game/{session_id}/{player_id}
-const WS_PATH = (base: string, sessionId: string, playerId: string) => {
-  if (!base) return `ws://localhost:8000/api/ws/game/${sessionId}/${playerId}`;
-  if (base.startsWith('ws://') || base.startsWith('wss://')) return `${base.replace(/\/+$/,'')}/api/ws/game/${sessionId}/${playerId}`;
-  if (base.startsWith('https://')) return `wss://${base.replace(/^https:\/\//,'').replace(/\/+$/,'')}/api/ws/game/${sessionId}/${playerId}`;
-  if (base.startsWith('http://')) return `ws://${base.replace(/^http:\/\//,'').replace(/\/+$/,'')}/api/ws/game/${sessionId}/${playerId}`;
-  return `ws://${base}/api/ws/game/${sessionId}/${playerId}`;
+// normalize + build wss/ws path
+const normalizeWsBase = (base?: string) => {
+  if (!base) {
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      return `wss://${window.location.host}`;
+    }
+    return `ws://localhost:8000`;
+  }
+
+  const trimmed = base.replace(/\/+$|\s+$/g, '');
+  if (trimmed.startsWith('ws://') || trimmed.startsWith('wss://')) return trimmed;
+  if (trimmed.startsWith('https://')) return `wss://${trimmed.replace(/^https:\/\//, '')}`;
+  if (trimmed.startsWith('http://')) {
+    // prefer secure if page served via https
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      return `wss://${trimmed.replace(/^http:\/\//, '')}`;
+    }
+    return `ws://${trimmed.replace(/^http:\/\//, '')}`;
+  }
+  // bare host
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return `wss://${trimmed}`;
+  }
+  return `ws://${trimmed}`;
 };
+
+const WS_PATH = (base: string | undefined, sessionId: string, playerId: string) => {
+  const wsBase = normalizeWsBase(base);
+  return `${wsBase}/api/ws/game/${sessionId}/${playerId}`;
+};
+
+const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || undefined;
 
 function formatMoney(val?: number | null) {
   if (!val && val !== 0) return '0M';
@@ -23,7 +47,6 @@ export default function GamePage() {
   const player2 = (params?.player2 as string) || '';
 
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:8000';
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [gameState, setGameState] = useState<any>(null);
@@ -36,6 +59,11 @@ export default function GamePage() {
   const wsRef = useRef<WebSocket | null>(null);
   const prevHighestRef = useRef<number>(0);
   const expiryHandledRef = useRef<boolean>(false);
+
+  // reconnection helpers
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 8;
+  const baseDelay = 800;
 
   const createSession = useCallback(async () => {
     try {
@@ -65,79 +93,94 @@ export default function GamePage() {
       return;
     }
     let mounted = true;
+
+    const attachSocketHandlers = (ws: WebSocket, sid: string, p1: string) => {
+      ws.onopen = () => {
+        reconnectAttemptsRef.current = 0;
+        setIsConnected(true);
+        setError(null);
+        setLoading(false);
+        console.info('WebSocket opened', ws.url);
+      };
+
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg?.type === 'state_update') {
+            const newState = msg.data;
+            const prev = prevHighestRef.current || 0;
+            const newHighest = Number(newState?.highest_bid || 0);
+            if (newHighest > prev) {
+              setSecondsLeft(30);
+              expiryHandledRef.current = false;
+            }
+            prevHighestRef.current = newHighest;
+            setGameState(newState);
+          } else if (['auction_started', 'bid_placed', 'turn_skipped', 'match_result', 'auction_state', 'timer_update'].includes(msg?.type)) {
+            fetch(`${API_BASE}/session/${sid}/state`)
+              .then((r) => r.json())
+              .then((j) => {
+                const s = j?.data || j;
+                const newHighest = Number(s?.highest_bid || 0);
+                prevHighestRef.current = newHighest;
+                setGameState(s);
+                setSecondsLeft(30);
+                expiryHandledRef.current = false;
+              })
+              .catch(() => null);
+          }
+        } catch (e) {
+          console.error('ws message parse', e);
+        }
+      };
+
+      ws.onclose = (ev) => {
+        setIsConnected(false);
+        console.warn('WebSocket closed', { url: ws.url, code: (ev as CloseEvent)?.code, reason: (ev as CloseEvent)?.reason });
+        scheduleReconnect(ws, sid, p1);
+      };
+
+      ws.onerror = (ev) => {
+        console.error('WebSocket error', { url: ws.url, event: ev });
+        scheduleReconnect(ws, sid, p1);
+      };
+    };
+
+    const scheduleReconnect = (oldWs: WebSocket | null, sid: string, p1: string) => {
+      reconnectAttemptsRef.current += 1;
+      const attempt = reconnectAttemptsRef.current;
+      if (attempt > maxReconnectAttempts) {
+        setLoading(false);
+        setError('تعذر الاتصال بعد عدة محاولات. الرجاء المحاولة لاحقاً.');
+        return;
+      }
+      const jitter = Math.floor(Math.random() * 300);
+      const delay = Math.min(25000, Math.round(baseDelay * Math.pow(1.8, attempt - 1)) + jitter);
+
+      setError(null);
+      setLoading(true);
+
+      setTimeout(() => {
+        if (wsRef.current && wsRef.current !== oldWs) return;
+        try {
+          const newWs = new WebSocket(WS_PATH(WS_BASE, sid, p1));
+          wsRef.current = newWs;
+          attachSocketHandlers(newWs, sid, p1);
+        } catch (e) {
+          console.error('reconnect failed', e);
+          scheduleReconnect(oldWs, sid, p1);
+        }
+      }, delay);
+    };
+
     (async () => {
       const sid = await createSession();
       if (!sid || !mounted) return;
 
-      const wsUrl = WS_PATH(WS_BASE, sid, player1);
       try {
-        const ws = new WebSocket(wsUrl);
+        const ws = new WebSocket(WS_PATH(WS_BASE, sid, player1));
         wsRef.current = ws;
-
-        ws.onopen = () => {
-          setIsConnected(true);
-          setError(null);
-          console.info('WebSocket opened', wsUrl);
-        };
-
-        ws.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(ev.data);
-            if (msg?.type === 'state_update') {
-              const newState = msg.data;
-              const prev = prevHighestRef.current || 0;
-              const newHighest = Number(newState?.highest_bid || 0);
-              if (newHighest > prev) {
-                setSecondsLeft(30);
-                expiryHandledRef.current = false;
-              }
-              prevHighestRef.current = newHighest;
-              setGameState(newState);
-            } else if (['auction_started', 'bid_placed', 'turn_skipped', 'match_result', 'auction_state', 'timer_update'].includes(msg?.type)) {
-              fetch(`${API_BASE}/session/${sid}/state`)
-                .then((r) => r.json())
-                .then((j) => {
-                  const s = j?.data || j;
-                  const newHighest = Number(s?.highest_bid || 0);
-                  prevHighestRef.current = newHighest;
-                  setGameState(s);
-                  setSecondsLeft(30);
-                  expiryHandledRef.current = false;
-                })
-                .catch(() => null);
-            }
-          } catch (e) {
-            console.error('ws message parse', e);
-          }
-        };
-
-        ws.onclose = (ev) => {
-          setIsConnected(false);
-          console.warn('WebSocket closed', { url: wsUrl, code: (ev as CloseEvent)?.code, reason: (ev as CloseEvent)?.reason });
-
-          // If we don't have game state yet, surface a clear error to the user
-          if (!gameState) {
-            const code = (ev as CloseEvent)?.code ?? 'غير معروف';
-            const reason = (ev as CloseEvent)?.reason ?? 'لا يوجد سبب موضح';
-            setError(`اتصال WebSocket مغلق (code: ${code}). السبب: ${reason}`);
-            setLoading(false);
-          }
-
-          setTimeout(() => {
-            if (wsRef.current !== ws) return;
-            if (sessionId) {
-              const newWs = new WebSocket(WS_PATH(WS_BASE, sessionId, player1));
-              wsRef.current = newWs;
-            }
-          }, 2000);
-        };
-
-        ws.onerror = (ev) => {
-          console.error('WebSocket error', { url: wsUrl, event: ev });
-          const reason = (ev && (ev as any).message) ? (ev as any).message : 'خطأ في WebSocket';
-          setError(`فشل اتصال WebSocket: ${reason}`);
-          setLoading(false);
-        };
+        attachSocketHandlers(ws, sid, player1);
       } catch (e) {
         console.error('WS connection failed', e);
         setError(`فشل إنشاء WebSocket: ${e instanceof Error ? e.message : String(e)}`);
@@ -151,7 +194,7 @@ export default function GamePage() {
         try { wsRef.current.close(); } catch (e) {}
       }
     };
-  }, [player1, createSession, WS_BASE, API_BASE, sessionId, gameState]);
+  }, [player1, createSession, API_BASE]);
 
   useEffect(() => {
     if (!gameState) return;
@@ -381,7 +424,8 @@ export default function GamePage() {
             <div className="relative z-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
               {/* FIFA Ultimate Team Card Mock */}
               <div className="flex justify-center">
-                <div className="relative w-64 h-96 rounded-3xl bg-gradient-to-tr from-amber-600 via-yellow-200 to-amber-700 p-1 shadow-[0_20px_40px_rgba(0,0,0,0.8)] transform hover:scale-105 tran[...]" />
+                <div className="relative w-64 h-96 rounded-3xl bg-gradient-to-tr from-amber-600 via-yellow-200 to-amber-700 p-1 shadow-[0_20px_40px_rgba(0,0,0,0.8)] transform hover:scale-105 transition-all">
+                </div>
               </div>
 
               {/* Price & Action Section */}
@@ -402,7 +446,7 @@ export default function GamePage() {
                         key={amt}
                         onClick={() => quickBid(amt)}
                         disabled={!isMyTurn}
-                        className="py-2.5 rounded-xl border border-zinc-700/80 bg-zinc-900/60 hover:bg-amber-400 hover:text-black hover:border-amber-400 font-bold transition-all duration-200 acti[...]"
+                        className="py-2.5 rounded-xl border border-zinc-700/80 bg-zinc-900/60 hover:bg-amber-400 hover:text-black hover:border-amber-400 font-bold transition-all duration-200 active:scale-95 disabled:opacity-40"
                       >
                         +{amt}M
                       </button>
@@ -424,7 +468,7 @@ export default function GamePage() {
                     <button
                       onClick={onConfirmBid}
                       disabled={!isMyTurn}
-                      className="px-6 py-3 rounded-xl font-black bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_#10b98140] transition-all duration-200 active:scale-95 disabled:op[...]"
+                      className="px-6 py-3 rounded-xl font-black bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_#10b98140] transition-all duration-200 active:scale-95 disabled:opacity-40"
                     >
                       مزايدة
                     </button>
@@ -433,7 +477,7 @@ export default function GamePage() {
                   <button
                     onClick={doSkip}
                     disabled={!isMyTurn}
-                    className="w-full py-2.5 rounded-xl font-bold bg-zinc-900/80 hover:bg-rose-950/50 hover:text-rose-400 border border-zinc-800 hover:border-rose-800 transition-all duration-200 [...]"
+                    className="w-full py-2.5 rounded-xl font-bold bg-zinc-900/80 hover:bg-rose-950/50 hover:text-rose-400 border border-zinc-800 hover:border-rose-800 transition-all duration-200"
                   >
                     تخطي الدور (Skip)
                   </button>
