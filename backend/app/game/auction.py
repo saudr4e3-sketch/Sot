@@ -24,8 +24,8 @@ POSITION_DISPLAY = {
 def generate_massive_database() -> Dict[str, List[Dict[str, Any]]]:
     db = {"GK": [], "DEF": [], "MID": [], "ATT": [], "COACH": []}
     
-    first_names = ["محمد", "أحمد", "عمر", "خالد", "يوسف", "إبراهيم", "كريستيانو", "ليونيل", "كيفين", "كيليان", "جود", "فينيسيوس", "روبرت", "إيرلينغ", "فيرجيل", "اليسون", "تيبو", "مانويل"]
-    last_names = ["الدوسري", "العمري", "البلوي", "المالكي", "الشهري", "سيلفا", "موسيالا", "رودريغو", "بيلينغهام", "مبابي", "هالاند", "دي بروين", "فان دايك", "صلاح", "بونو", "كورتوا", "نوير"]
+    first_names = ["محمد", "أحمد", "عمر", "خالد", "يوسف", "إبراهيم", "كريستيانو", "ليونيل", "كيفين", "كيليان", "جود", "فينيسيوس", "ر[...]"]
+    last_names = ["الدوسري", "العمري", "البلوي", "المالكي", "الشهري", "سيلفا", "موسيالا", "رودريغو", "بيلينغهام", "مبابي", "هال�[..."]
 
     for pos in ["GK", "DEF", "MID", "ATT"]:
         for i in range(1, 51):
@@ -119,7 +119,8 @@ class OSMDualBattle:
         if session["current_round"] < len(pool):
             session["current_card"] = pool[session["current_round"]]
             session["current_bid"] = session["current_card"]["base_price"]
-            session["highest_bidder": None] = None
+            # Fixed incorrect dictionary key assignment that caused a TypeError: used slicing syntax by mistake
+            session["highest_bidder"] = None  # تم التعديل: إصلاح السطر ليعيّن highest_bidder بشكل صحيح بدلاً من استخدام صيغة الشرائح
             session["timer"] = 30
             session["current_round"] += 1
             return {"success": True, "card": session["current_card"], "status": "bidding"}
