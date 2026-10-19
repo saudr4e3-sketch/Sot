@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 
-// normalize + build wss/ws path
 const normalizeWsBase = (base?: string) => {
   if (!base) {
     if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
@@ -12,17 +11,15 @@ const normalizeWsBase = (base?: string) => {
     return `ws://localhost:8000`;
   }
 
-  const trimmed = base.replace(/\/+$|\s+$/g, '');
+  const trimmed = base.trim().replace(/\/+$/g, '').replace(/\/api\/?$/i, '');
   if (trimmed.startsWith('ws://') || trimmed.startsWith('wss://')) return trimmed;
   if (trimmed.startsWith('https://')) return `wss://${trimmed.replace(/^https:\/\//, '')}`;
   if (trimmed.startsWith('http://')) {
-    // prefer secure if page served via https
     if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
       return `wss://${trimmed.replace(/^http:\/\//, '')}`;
     }
     return `ws://${trimmed.replace(/^http:\/\//, '')}`;
   }
-  // bare host
   if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
     return `wss://${trimmed}`;
   }
@@ -319,7 +316,6 @@ export default function GamePage() {
 
   return (
     <main className="min-h-screen bg-[#07090e] text-white selection:bg-amber-500 selection:text-black font-sans pb-12" dir="rtl">
-      {/* Top Navbar */}
       <nav className="border-b border-zinc-800/80 bg-zinc-950/60 backdrop-blur-md sticky top-0 z-40 px-4 lg:px-8 py-3.5">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -339,9 +335,7 @@ export default function GamePage() {
       </nav>
 
       <div className="max-w-7xl mx-auto px-4 lg:px-8 pt-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Side: Match Context & Stats */}
         <aside className="lg:col-span-4 space-y-6 order-2 lg:order-1">
-          {/* Team Power Overview */}
           <div className="bg-gradient-to-b from-zinc-900/80 to-zinc-950/80 border border-zinc-800/80 rounded-3xl p-6 shadow-xl backdrop-blur-sm">
             <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-400 mb-4 flex items-center gap-2">
               <span className="w-1.5 h-3 bg-amber-400 rounded-full"></span>
@@ -361,7 +355,6 @@ export default function GamePage() {
             </div>
           </div>
 
-          {/* Live Action Feed */}
           <div className="bg-gradient-to-b from-zinc-900/80 to-zinc-950/80 border border-zinc-800/80 rounded-3xl p-6 shadow-xl backdrop-blur-sm">
             <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-400 mb-4 flex items-center gap-2">
               <span className="w-1.5 h-3 bg-cyan-400 rounded-full"></span>
@@ -382,14 +375,10 @@ export default function GamePage() {
           </div>
         </aside>
 
-        {/* Right Side: FUT Card Display & Bidding Arena */}
         <section className="lg:col-span-8 space-y-6 order-1 lg:order-2">
-          {/* Main Card Arena */}
           <div className="relative bg-gradient-to-b from-zinc-900/60 via-zinc-950/90 to-zinc-950 border border-zinc-800/80 rounded-3xl p-6 lg:p-8 shadow-2xl overflow-hidden">
-            {/* Ambient Lighting */}
             <div className="absolute top-0 right-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
-            {/* Header: Turn status & Timer bar */}
             <div className="relative z-10 flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-zinc-800/60">
               <div className="flex items-center gap-3">
                 <div className={`px-4 py-1.5 rounded-full text-xs font-black tracking-wider uppercase flex items-center gap-2 ${
@@ -410,7 +399,6 @@ export default function GamePage() {
               </div>
             </div>
 
-            {/* Timer Progress Bar */}
             <div className="w-full h-1.5 bg-zinc-800 rounded-full mt-4 overflow-hidden">
               <div
                 className={`h-full transition-all duration-1000 ease-linear ${
@@ -420,15 +408,15 @@ export default function GamePage() {
               />
             </div>
 
-            {/* Center Stage: FUT Card + Price Panel */}
             <div className="relative z-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-              {/* FIFA Ultimate Team Card Mock */}
               <div className="flex justify-center">
-                <div className="relative w-64 h-96 rounded-3xl bg-gradient-to-tr from-amber-600 via-yellow-200 to-amber-700 p-1 shadow-[0_20px_40px_rgba(0,0,0,0.8)] transform hover:scale-105 transition-all">
+                <div className="relative w-64 h-96 rounded-3xl bg-gradient-to-tr from-amber-600 via-yellow-200 to-amber-700 p-1 shadow-[0_20px_40px_rgba(0,0,0,0.8)] transform hover:scale-105 transition-transform duration-300">
+                  <div className="w-full h-full rounded-[1.3rem] bg-zinc-950/50 border border-amber-200/30 flex items-center justify-center text-2xl font-black text-white/90">
+                    {card?.name || 'CARD'}
+                  </div>
                 </div>
               </div>
 
-              {/* Price & Action Section */}
               <div className="flex flex-col justify-center space-y-6">
                 <div>
                   <span className="text-xs uppercase font-extrabold tracking-widest text-zinc-500 block mb-1">أعلى عرض قائم</span>
@@ -437,7 +425,6 @@ export default function GamePage() {
                   </div>
                 </div>
 
-                {/* Quick Add Buttons */}
                 <div className="space-y-2">
                   <span className="text-xs font-semibold text-zinc-400">مزايدة سريعة فوق السعر:</span>
                   <div className="grid grid-cols-3 gap-2">
@@ -446,7 +433,7 @@ export default function GamePage() {
                         key={amt}
                         onClick={() => quickBid(amt)}
                         disabled={!isMyTurn}
-                        className="py-2.5 rounded-xl border border-zinc-700/80 bg-zinc-900/60 hover:bg-amber-400 hover:text-black hover:border-amber-400 font-bold transition-all duration-200 active:scale-95 disabled:opacity-40"
+                        className="py-2.5 rounded-xl border border-zinc-700/80 bg-zinc-900/60 hover:bg-amber-400 hover:text-black hover:border-amber-400 font-bold transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         +{amt}M
                       </button>
@@ -454,7 +441,6 @@ export default function GamePage() {
                   </div>
                 </div>
 
-                {/* Custom Bid & Skip Actions */}
                 <div className="space-y-3 pt-2">
                   <div className="flex gap-2">
                     <input
@@ -468,7 +454,7 @@ export default function GamePage() {
                     <button
                       onClick={onConfirmBid}
                       disabled={!isMyTurn}
-                      className="px-6 py-3 rounded-xl font-black bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_#10b98140] transition-all duration-200 active:scale-95 disabled:opacity-40"
+                      className="px-6 py-3 rounded-xl font-black bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_#10b98140] transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       مزايدة
                     </button>
@@ -477,7 +463,7 @@ export default function GamePage() {
                   <button
                     onClick={doSkip}
                     disabled={!isMyTurn}
-                    className="w-full py-2.5 rounded-xl font-bold bg-zinc-900/80 hover:bg-rose-950/50 hover:text-rose-400 border border-zinc-800 hover:border-rose-800 transition-all duration-200"
+                    className="w-full py-2.5 rounded-xl font-bold bg-zinc-900/80 hover:bg-rose-950/50 hover:text-rose-400 border border-zinc-800 hover:border-rose-800 transition-all duration-200 active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     تخطي الدور (Skip)
                   </button>
