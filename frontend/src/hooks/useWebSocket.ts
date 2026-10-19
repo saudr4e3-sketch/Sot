@@ -1,28 +1,6 @@
-/**
- * ============================================================================
- * OSM FUT Dual Battle - Enterprise WebSocket Hook (Sentinel Engine)
- * Version: 7.0.0 - Mystery Box Integration, Match Engine Sync, Enhanced State Management
- * ============================================================================
- *
- * Features:
- * - Fully decoupled local types (no external import dependencies)
- * - Automatic reconnection with exponential backoff and jitter
- * - Heartbeat / Ping-Pong with adaptive interval
- * - Message buffer queue to prevent data loss during reconnection
- * - Defensive multi-format message parsing (JSON, ArrayBuffer, Blob)
- * - Memory leak prevention with proper cleanup
- * - Re-render optimization using refs for mutable state
- * - Connection health monitoring
- * - Mystery Box and Match Engine message support
- * - Anti-duplicate player tracking
- * - Bot mode vs Room PIN separation
- */
-
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-
-// ==================== LOCAL TYPES ====================
 
 interface GameMessage {
   type?: string
@@ -88,8 +66,6 @@ interface UseWebSocketReturn {
   connectionHealth: 'healthy' | 'degraded' | 'critical' | 'offline'
 }
 
-// ==================== CONSTANTS ====================
-
 const INITIAL_RECONNECT_DELAY_MS = 800
 const MAX_RECONNECT_DELAY_MS = 25000
 const RECONNECT_BACKOFF_MULTIPLIER = 1.8
@@ -102,19 +78,23 @@ const MESSAGE_BUFFER_MAX_SIZE = 50
 const HEALTH_CHECK_WINDOW_MS = 60000
 const MAX_MISSED_HEARTBEATS = 3
 
-// ==================== AUCTION SEQUENCE ====================
-
 const DEFAULT_AUCTION_SEQUENCE = ['GK', 'DEF', 'DEF', 'MID', 'MID', 'MID', 'ATT', 'ATT', 'MGR']
-
-// ==================== MATCH WEIGHTS ====================
-
 const DEFAULT_MATCH_WEIGHTS = {
   rating_weight: 0.40,
   tactic_weight: 0.30,
   momentum_weight: 0.30
 }
 
-// ==================== HOOK IMPLEMENTATION ====================
+const normalizeWsBase = (base?: string): string => {
+  if (!base) return 'ws://localhost:8000'
+  const trimmed = base.trim().replace(/\/+$/g, '').replace(/\/api\/?$/i, '')
+  if (!trimmed) return 'ws://localhost:8000'
+
+  if (trimmed.startsWith('ws://') || trimmed.startsWith('wss://')) return trimmed
+  if (trimmed.startsWith('https://')) return `wss://${trimmed.replace(/^https:\/\//, '')}`
+  if (trimmed.startsWith('http://')) return `ws://${trimmed.replace(/^http:\/\//, '')}`
+  return `ws://${trimmed}`
+}
 
 export const useWebSocket = ({
   sessionId,
@@ -123,13 +103,11 @@ export const useWebSocket = ({
   onConnect,
   onDisconnect,
 }: UseWebSocketOptions): UseWebSocketReturn => {
-  // ===== State =====
   const [isConnected, setIsConnected] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const [connectionAttempts, setConnectionAttempts] = useState<number>(0)
   const [connectionHealth, setConnectionHealth] = useState<'healthy' | 'degraded' | 'critical' | 'offline'>('offline')
 
-  // ===== Refs =====
   const socketRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -150,12 +128,10 @@ export const useWebSocket = ({
   const pendingBidsRef = useRef<Map<string, { amount: number; timestamp: number }>>(new Map())
   const acquiredPlayerIdsRef = useRef<Set<string>>(new Set())
 
-  // Keep callback refs updated
   onMessageRef.current = onMessage
   onConnectRef.current = onConnect
   onDisconnectRef.current = onDisconnect
 
-  // ===== Health Monitoring =====
   const updateConnectionHealth = useCallback(() => {
     if (!isMountedRef.current) return
     const now = Date.now()
@@ -172,55 +148,6 @@ export const useWebSocket = ({
     }
   }, [isConnected])
 
-  // ===== Flush Message Buffer =====
-  const flushMessageBuffer = useCallback(() => {
-    if (messageBufferRef.current.length === 0) return
-    console.log(`[WebSocket] Flushing ${messageBufferRef.current.length} buffered messages`)
-    const messages = [...messageBufferRef.current]
-    messageBufferRef.current = []
-    messages.forEach((msg) => {
-      if (isMountedRef.current) {
-        onMessageRef.current?.(msg)
-      }
-    })
-  }, [])
-
-  // ===== Resend Pending Bids =====
-  const resendPendingBids = useCallback(() => {
-    if (pendingBidsRef.current.size === 0) return
-    console.log(`[WebSocket] Resending ${pendingBidsRef.current.size} pending bids`)
-    
-    pendingBidsRef.current.forEach((bidData, bidKey) => {
-      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-        try {
-          const payload = JSON.stringify({
-            type: 'place_bid',
-            action: 'place_bid',
-            session_id: sessionId,
-            player_id: playerId,
-            amount: bidData.amount,
-            timestamp: Date.now(),
-            is_retry: true,
-            original_timestamp: bidData.timestamp
-          })
-          socketRef.current.send(payload)
-          console.log(`[WebSocket] Resent bid: ${bidData.amount}M`)
-        } catch (sendError) {
-          console.error('[WebSocket] Failed to resend bid:', sendError)
-        }
-      }
-    })
-    
-    // Clear old pending bids (older than 30 seconds)
-    const now = Date.now()
-    pendingBidsRef.current.forEach((bidData, bidKey) => {
-      if (now - bidData.timestamp > 30000) {
-        pendingBidsRef.current.delete(bidKey)
-      }
-    })
-  }, [sessionId, playerId])
-
-  // ===== Cleanup All Timers =====
   const clearAllTimers = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current)
@@ -244,7 +171,6 @@ export const useWebSocket = ({
     }
   }, [])
 
-  // ===== Close Socket Safely =====
   const closeSocket = useCallback(() => {
     clearAllTimers()
     if (socketRef.current) {
@@ -264,7 +190,6 @@ export const useWebSocket = ({
     }
   }, [clearAllTimers])
 
-  // ===== Start Heartbeat =====
   const startHeartbeat = useCallback(() => {
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current)
@@ -304,34 +229,15 @@ export const useWebSocket = ({
     }, HEARTBEAT_INTERVAL_MS)
   }, [updateConnectionHealth])
 
-  // ===== Build WebSocket URL =====
   const buildWebSocketUrl = useCallback((): string => {
-    if (!sessionId || !playerId) {
-      return ''
-    }
+    if (!sessionId || !playerId) return ''
 
-    const isLocal: boolean = typeof window !== 'undefined' && (
-      window.location.hostname.includes('localhost') ||
-      window.location.hostname.includes('127.0.0.1')
-    )
+    const envUrl = process.env.NEXT_PUBLIC_WS_URL
+    const wsBase = normalizeWsBase(envUrl)
 
-    let wsProtocol: string = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws'
-    let backendHost: string = isLocal ? 'localhost:8000' : (typeof window !== 'undefined' ? window.location.host : '')
-
-    const envUrl: string | undefined = process.env.NEXT_PUBLIC_WS_URL
-    if (envUrl) {
-      const cleanEnv: string = envUrl
-        .replace(/^https?:\/\//, '')
-        .replace(/^wss?:\/\//, '')
-        .replace(/\/$/, '')
-      backendHost = cleanEnv
-      wsProtocol = envUrl.startsWith('https://') || envUrl.startsWith('wss://') ? 'wss' : 'ws'
-    }
-
-    return `${wsProtocol}://${backendHost}/api/ws/game/${sessionId}/${playerId}`
+    return `${wsBase}/api/ws/game/${sessionId}/${playerId}`
   }, [sessionId, playerId])
 
-  // ===== Parse Incoming Message =====
   const parseIncomingMessage = useCallback((event: MessageEvent): GameMessage | null => {
     try {
       if (typeof event.data === 'string') {
@@ -353,21 +259,17 @@ export const useWebSocket = ({
     }
   }, [])
 
-  // ===== Process Message for Duplicate Prevention =====
   const processMessageForDuplicates = useCallback((message: GameMessage): GameMessage => {
-    // Track acquired player IDs to prevent duplicates
     if (message.acquired_player_ids && Array.isArray(message.acquired_player_ids)) {
       message.acquired_player_ids.forEach((id: string) => {
         acquiredPlayerIdsRef.current.add(id)
       })
     }
 
-    // If auction state has current_player, check for duplicates
     if (message.auction_state?.current_player?.card_id) {
       const cardId = message.auction_state.current_player.card_id
       if (acquiredPlayerIdsRef.current.has(cardId)) {
         console.warn(`[WebSocket] Duplicate player detected: ${cardId} - Requesting new player`)
-        // Send request for new unique player
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
           try {
             socketRef.current.send(JSON.stringify({
@@ -390,7 +292,6 @@ export const useWebSocket = ({
     return message
   }, [sessionId, playerId])
 
-  // ===== Connect WebSocket =====
   const connectSocket = useCallback(() => {
     if (!isMountedRef.current) return
     if (!sessionId || !playerId) {
@@ -411,7 +312,7 @@ export const useWebSocket = ({
 
     clearAllTimers()
 
-    const wsUrl: string = buildWebSocketUrl()
+    const wsUrl = buildWebSocketUrl()
     if (!wsUrl) {
       setError('Invalid WebSocket URL')
       return
@@ -440,15 +341,12 @@ export const useWebSocket = ({
       }
     }, CONNECTION_TIMEOUT_MS)
 
-    // ===== onopen =====
     ws.onopen = () => {
       if (!isMountedRef.current) return
-
       if (connectionTimeoutRef.current) {
         clearTimeout(connectionTimeoutRef.current)
         connectionTimeoutRef.current = null
       }
-
       console.log('[WebSocket] Connected successfully')
       setIsConnected(true)
       setError(null)
@@ -461,28 +359,19 @@ export const useWebSocket = ({
 
       startHeartbeat()
       onConnectRef.current?.()
-
-      // Resend any pending bids
-      resendPendingBids()
-
-      // Flush any buffered messages from reconnection period
-      flushMessageBuffer()
     }
 
-    // ===== onmessage =====
     ws.onmessage = (event: MessageEvent) => {
       if (!isMountedRef.current) return
 
       let parsedMessage = parseIncomingMessage(event)
       if (!parsedMessage) return
 
-      // Process for duplicate prevention
       parsedMessage = processMessageForDuplicates(parsedMessage)
 
       lastSuccessfulMessageRef.current = Date.now()
       missedHeartbeatsRef.current = 0
 
-      // Handle pong response
       if (parsedMessage.type === 'pong') {
         if (pongTimeoutRef.current) {
           clearTimeout(pongTimeoutRef.current)
@@ -492,65 +381,10 @@ export const useWebSocket = ({
         return
       }
 
-      // Handle bid confirmation - remove from pending
-      if (parsedMessage.type === 'bid_confirmed' || parsedMessage.type === 'bid_placed') {
-        const bidKey = `${parsedMessage.player_id}_${parsedMessage.amount}`
-        pendingBidsRef.current.delete(bidKey)
-      }
-
-      // Handle bid rejection
-      if (parsedMessage.type === 'bid_rejected') {
-        const bidKey = `${playerId}_${parsedMessage.amount}`
-        pendingBidsRef.current.delete(bidKey)
-        console.warn('[WebSocket] Bid rejected:', parsedMessage.reason)
-      }
-
-      // Handle match result with mystery box
-      if (parsedMessage.type === 'match_result' || parsedMessage.type === 'match_completed') {
-        if (parsedMessage.data?.mystery_boxes) {
-          console.log('[WebSocket] Mystery boxes awarded:', parsedMessage.data.mystery_boxes)
-        }
-        // Apply match weights if present
-        if (!parsedMessage.data?.match_weights) {
-          parsedMessage.data = {
-            ...parsedMessage.data,
-            match_weights: DEFAULT_MATCH_WEIGHTS
-          }
-        }
-      }
-
-      // Handle auction state updates with anti-duplicate
-      if (parsedMessage.auction_state) {
-        // Ensure auction sequence is enforced
-        if (!parsedMessage.auction_state.auction_sequence || 
-            parsedMessage.auction_state.auction_sequence.length === 0) {
-          parsedMessage.auction_state.auction_sequence = [...DEFAULT_AUCTION_SEQUENCE]
-        }
-        
-        // Ensure match weights are set
-        if (!parsedMessage.auction_state.match_weights) {
-          parsedMessage.auction_state.match_weights = DEFAULT_MATCH_WEIGHTS
-        }
-        
-        // Track acquired players
-        if (parsedMessage.auction_state.acquired_player_ids) {
-          parsedMessage.auction_state.acquired_player_ids.forEach((id: string) => {
-            acquiredPlayerIdsRef.current.add(id)
-          })
-        }
-      }
-
-      // Handle error messages
       if (parsedMessage.type === 'error') {
         setError(parsedMessage.message || parsedMessage.error || 'Unknown server error')
       }
 
-      // Handle new player request response
-      if (parsedMessage.type === 'new_player_assigned') {
-        console.log('[WebSocket] New unique player assigned:', parsedMessage.data?.name)
-      }
-
-      // If currently reconnecting, buffer the message
       if (isReconnectingRef.current) {
         if (messageBufferRef.current.length < MESSAGE_BUFFER_MAX_SIZE) {
           messageBufferRef.current.push(parsedMessage)
@@ -558,12 +392,10 @@ export const useWebSocket = ({
         return
       }
 
-      // Forward message to handler
       onMessageRef.current?.(parsedMessage)
       updateConnectionHealth()
     }
 
-    // ===== onerror =====
     ws.onerror = (event: Event) => {
       console.error('[WebSocket] Error event:', event)
       if (isMountedRef.current) {
@@ -572,12 +404,10 @@ export const useWebSocket = ({
       }
     }
 
-    // ===== onclose =====
     ws.onclose = (event: CloseEvent) => {
       if (!isMountedRef.current) return
 
       console.log(`[WebSocket] Closed - Code: ${event.code}, Reason: ${event.reason}`)
-
       clearAllTimers()
 
       if (isMountedRef.current) {
@@ -587,15 +417,13 @@ export const useWebSocket = ({
 
       onDisconnectRef.current?.()
 
-      // Only reconnect if not manually closed
       if (!isManuallyClosedRef.current) {
         isReconnectingRef.current = true
         scheduleReconnect()
       }
     }
-  }, [sessionId, playerId, buildWebSocketUrl, clearAllTimers, startHeartbeat, parseIncomingMessage, flushMessageBuffer, updateConnectionHealth, processMessageForDuplicates, resendPendingBids])
+  }, [sessionId, playerId, buildWebSocketUrl, clearAllTimers, startHeartbeat, parseIncomingMessage, processMessageForDuplicates, updateConnectionHealth])
 
-  // ===== Schedule Reconnection with Exponential Backoff + Jitter =====
   const scheduleReconnect = useCallback(() => {
     if (!isMountedRef.current) return
     if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
@@ -606,7 +434,7 @@ export const useWebSocket = ({
     }
 
     const jitter = Math.floor(Math.random() * RECONNECT_JITTER_MS)
-    const delay: number = currentReconnectDelayRef.current + jitter
+    const delay = currentReconnectDelayRef.current + jitter
     console.log(`[WebSocket] Scheduling reconnect in ${delay}ms (Attempt: ${reconnectAttemptsRef.current + 1})`)
 
     reconnectTimeoutRef.current = setTimeout(() => {
@@ -621,9 +449,7 @@ export const useWebSocket = ({
     }, delay)
   }, [connectSocket])
 
-  // ===== Public Reconnect Function =====
   const reconnect = useCallback(() => {
-    console.log('[WebSocket] Manual reconnect triggered')
     reconnectAttemptsRef.current = 0
     currentReconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS
     setConnectionAttempts(0)
@@ -634,26 +460,22 @@ export const useWebSocket = ({
     connectSocket()
   }, [closeSocket, connectSocket])
 
-  // ===== Send Message with Buffer and Duplicate Prevention =====
   const send = useCallback((message: Partial<GameMessage>) => {
-    // Add auction sequence and match weights to relevant messages
     if (message.type === 'init_bot_match' || message.type === 'start_auction') {
       message.auction_sequence = DEFAULT_AUCTION_SEQUENCE
       message.match_weights = DEFAULT_MATCH_WEIGHTS
     }
-    
-    // Add excluded player IDs for duplicate prevention
+
     if (message.type === 'request_new_player' || message.type === 'start_auction') {
       message.exclude_ids = Array.from(acquiredPlayerIdsRef.current)
     }
-    
+
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       try {
-        const payload: string = JSON.stringify(message)
+        const payload = JSON.stringify(message)
         socketRef.current.send(payload)
         lastSuccessfulMessageRef.current = Date.now()
-        
-        // Track pending bids
+
         if (message.type === 'place_bid' && message.amount) {
           const bidKey = `${playerId}_${message.amount}`
           pendingBidsRef.current.set(bidKey, {
@@ -664,8 +486,7 @@ export const useWebSocket = ({
       } catch (sendError) {
         console.error('[WebSocket] Send failed:', sendError)
         setError('Failed to send message')
-        
-        // Buffer failed bid for retry
+
         if (message.type === 'place_bid' && message.amount) {
           const bidKey = `${playerId}_${message.amount}`
           pendingBidsRef.current.set(bidKey, {
@@ -676,14 +497,11 @@ export const useWebSocket = ({
       }
     } else {
       console.warn('[WebSocket] Cannot send - socket not open. ReadyState:', socketRef.current?.readyState)
-      // Buffer important messages for reconnection
       if (message.type && ['place_bid', 'skip_bid', 'start_match', 'init_bot_match', 'join_room'].includes(message.type)) {
         if (messageBufferRef.current.length < MESSAGE_BUFFER_MAX_SIZE) {
           messageBufferRef.current.push(message as GameMessage)
-          console.log('[WebSocket] Message buffered for reconnection')
         }
-        
-        // Track pending bids even when offline
+
         if (message.type === 'place_bid' && message.amount) {
           const bidKey = `${playerId}_${message.amount}`
           pendingBidsRef.current.set(bidKey, {
@@ -695,7 +513,6 @@ export const useWebSocket = ({
     }
   }, [playerId])
 
-  // ===== Main Effect: Connect on Mount, Cleanup on Unmount =====
   useEffect(() => {
     isMountedRef.current = true
     isManuallyClosedRef.current = false
@@ -707,7 +524,6 @@ export const useWebSocket = ({
 
     connectSocket()
 
-    // Health check monitoring
     healthCheckIntervalRef.current = setInterval(() => {
       updateConnectionHealth()
     }, 10000)
@@ -722,7 +538,7 @@ export const useWebSocket = ({
       pendingBidsRef.current.clear()
       acquiredPlayerIdsRef.current.clear()
     }
-  }, [sessionId, playerId])
+  }, [sessionId, playerId, connectSocket, clearAllTimers, closeSocket, updateConnectionHealth])
 
   return {
     isConnected,
