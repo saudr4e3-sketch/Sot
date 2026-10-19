@@ -2,27 +2,34 @@
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
 
-/* MASTER DIRECTIVE: Visual System Compliance */
+/* MASTER DIRECTIVE: Visual System Compliance & Kalak-inspired Gaming Aesthetics */
 :root {
   /* Carbon Black & Deep Navy Background */
   --color-dark-bg: #0F1419;
   --color-dark-bg-alt: #1A1F2E;
   --color-dark-card: #2C2C3E;
+  
   /* Muted Terracotta - Primary Action */
   --color-accent-terracotta: #D4714D;
   --color-accent-terracotta-hover: #E88561;
+  --color-accent-terracotta-shadow: #8C3E25;
+  
   /* Text Colors */
   --color-text-primary: #E8E8E8;
   --color-text-secondary: #A0A0A0;
 }
 
-/* Global Styles */
+/* Global Styles & Kalak SVG Background Pattern */
 * {
   @apply transition-colors duration-200;
 }
 
 body {
   @apply bg-dark-bg text-text-primary font-sans antialiased;
+  /* نقش لعبة كلك مطبق بالكامل بألوان مشرو الكحلي الداكن */
+  background-color: #0F1419;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44.8829' height='48.963' viewBox='0 0 44.8829 48.963'%3E%3Cpath d='M18.498 -29.207 A2.697 2.697 0 0 1 18.498 -25.393 L-0.565 -6.329 A2.697 2.697 0 0 1 -4.379 -6.329 L-23.443 -25.393 A2.697 2.697 0 0 1 -23.443 -29.207 L-4.379 -48.271 A2.697 2.697 0 0 1 -0.565 -48.271Z' fill='%231A1F2E'/%3E%3C/svg%3E");
+  background-size: 45px 49px;
 }
 
 html {
@@ -47,39 +54,87 @@ html {
   @apply bg-accent-terracotta-hover;
 }
 
-/* Card Component Base */
+/* Card Component Base - مقتبس من إطارات بطاقات كلك */
 .card {
-  @apply bg-dark-card rounded-card shadow-card transition-all duration-200;
+  background-color: var(--color-dark-card);
+  border: 2px solid var(--color-dark-bg-alt);
+  border-radius: 12px;
+  box-shadow: inset 0px 2px 0px 0px rgba(255, 255, 255, 0.1), 0px 4px 10px rgba(0, 0, 0, 0.4);
+  @apply transition-all duration-200;
 }
 
 .card:hover {
-  @apply shadow-card-hover;
+  border-color: var(--color-accent-terracotta);
+  box-shadow: inset 0px 2px 0px 0px rgba(255, 255, 255, 0.2), 0px 6px 16px rgba(0, 0, 0, 0.6);
 }
 
-/* Button Components - Muted Terracotta Primary */
+/* Button Components - أزرار مجسمة 3D مستوحاة من تفاعلات أزرار كلك */
 .btn-primary {
-  @apply px-4 py-2 bg-accent-terracotta hover:bg-accent-terracotta-hover text-white rounded-btn font-semibold transition-all shadow-btn hover:shadow-lg;
+  background-color: var(--color-accent-terracotta);
+  color: #FFFFFF;
+  font-weight: 600;
+  border: 2px solid #000000;
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  /* الإضاءة العلوية مع ظل البروز السفلي */
+  box-shadow: inset 0px 2px 0px 0px rgba(255, 255, 255, 0.35), 0px 4px 0px 0px var(--color-accent-terracotta-shadow);
+  transition: all 0.1s ease-in-out;
+}
+
+.btn-primary:hover {
+  background-color: var(--color-accent-terracotta-hover);
 }
 
 .btn-primary:active {
-  @apply transform scale-95;
+  transform: translateY(3px);
+  box-shadow: inset 0px 1px 0px 0px rgba(255, 255, 255, 0.2), 0px 1px 0px 0px var(--color-accent-terracotta-shadow);
 }
 
 .btn-primary:disabled {
-  @apply opacity-50 cursor-not-allowed hover:bg-accent-terracotta;
+  @apply opacity-50 cursor-not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .btn-secondary {
-  @apply px-4 py-2 bg-dark-card hover:bg-dark-bg-alt border-2 border-accent-terracotta text-accent-terracotta rounded-btn font-semibold transition-all;
+  background-color: var(--color-dark-card);
+  color: var(--color-accent-terracotta);
+  font-weight: 600;
+  border: 2px solid var(--color-accent-terracotta);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  box-shadow: inset 0px 2px 0px 0px rgba(255, 255, 255, 0.1), 0px 3px 0px 0px rgba(0, 0, 0, 0.35);
+  transition: all 0.1s ease-in-out;
+}
+
+.btn-secondary:hover {
+  background-color: var(--color-dark-bg-alt);
+}
+
+.btn-secondary:active {
+  transform: translateY(2px);
+  box-shadow: 0px 1px 0px 0px rgba(0, 0, 0, 0.35);
 }
 
 .btn-tertiary {
   @apply px-4 py-2 bg-transparent hover:bg-dark-card text-text-secondary hover:text-text-primary rounded-btn font-semibold transition-all;
 }
 
-/* Input Styling */
+/* Input Styling - حقول إدخال بارزة ومريحة للعرض */
 input, textarea {
-  @apply bg-dark-bg-alt border border-dark-card text-text-primary placeholder-text-muted rounded-input px-3 py-2 focus:outline-none focus:border-accent-terracotta focus:ring-2 focus:ring-accent-terracotta/50 transition-all;
+  background-color: var(--color-dark-bg-alt);
+  border: 2px solid var(--color-dark-card);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  box-shadow: inset 0px 2px 4px rgba(0, 0, 0, 0.5);
+  transition: all 0.2s ease-in-out;
+}
+
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--color-accent-terracotta);
+  box-shadow: inset 0px 2px 4px rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(212, 113, 77, 0.3);
 }
 
 /* Animations */
