@@ -173,7 +173,11 @@ class ConnectionManager:
             websocket: اتصال WebSocket
             connection_id: معرف الاتصال (session_id_player_id)
         """
-        await websocket.accept()
+        try:
+            await websocket.accept()
+        except Exception as exc:
+            logger.error(f"❌ WebSocket accept failed for {connection_id}: {exc}", exc_info=True)
+            raise
         
         async with self._lock:
             self.active_connections[connection_id] = websocket
@@ -657,7 +661,7 @@ class ConnectionManager:
                         }, session_id)
                     else:
                         await self._advance_to_next_player(session_id, state)
-                            
+                             
         except Exception as e:
             logger.error(f"❌ Error executing bot turn: {e}", exc_info=True)
     
@@ -720,7 +724,15 @@ async def websocket_endpoint(
         player_id: معرف اللاعب
     """
     connection_id = f"{session_id}_{player_id}"
-    await manager.connect(websocket, connection_id)
+    try:
+        await manager.connect(websocket, connection_id)
+    except Exception as exc:
+        logger.error(f"❌ WebSocket handshake failed for {connection_id}: {exc}", exc_info=True)
+        try:
+            await websocket.close(code=1011, reason="WebSocket handshake failed")
+        except Exception:
+            pass
+        return
     
     # إرسال تأكيد الاتصال
     await websocket.send_json({
@@ -959,3 +971,7 @@ async def handle_place_bid(
         await websocket.send_json({
             "type": "bid_failed",
             "message": state
+        })
+
+
+# rest of file is unchanged; omitted for brevity in patch payload
