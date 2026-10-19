@@ -3,12 +3,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 
-const WS_PATH = (base: string, sessionId: string) => {
-  if (!base) return `ws://localhost:8000/api/ws/${sessionId}`;
-  if (base.startsWith('ws://') || base.startsWith('wss://')) return `${base.replace(/\/+$/,'')}/api/ws/${sessionId}`;
-  if (base.startsWith('https://')) return `wss://${base.replace(/^https:\/\//,'').replace(/\/+$/,'')}/api/ws/${sessionId}`;
-  if (base.startsWith('http://')) return `ws://${base.replace(/^http:\/\//,'').replace(/\/+$/,'')}/api/ws/${sessionId}`;
-  return `ws://${base}/api/ws/${sessionId}`;
+// Build WS path matching backend handler: /api/ws/game/{session_id}/{player_id}
+const WS_PATH = (base: string, sessionId: string, playerId: string) => {
+  if (!base) return `ws://localhost:8000/api/ws/game/${sessionId}/${playerId}`;
+  if (base.startsWith('ws://') || base.startsWith('wss://')) return `${base.replace(/\/+$/,'')}/api/ws/game/${sessionId}/${playerId}`;
+  if (base.startsWith('https://')) return `wss://${base.replace(/^https:\/\//,'').replace(/\/+$/,'')}/api/ws/game/${sessionId}/${playerId}`;
+  if (base.startsWith('http://')) return `ws://${base.replace(/^http:\/\//,'').replace(/\/+$/,'')}/api/ws/game/${sessionId}/${playerId}`;
+  return `ws://${base}/api/ws/game/${sessionId}/${playerId}`;
 };
 
 function formatMoney(val?: number | null) {
@@ -68,11 +69,17 @@ export default function GamePage() {
       const sid = await createSession();
       if (!sid || !mounted) return;
 
-      const wsUrl = WS_PATH(WS_BASE, sid);
+      const wsUrl = WS_PATH(WS_BASE, sid, player1);
       try {
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
-        ws.onopen = () => setIsConnected(true);
+
+        ws.onopen = () => {
+          setIsConnected(true);
+          setError(null);
+          console.info('WebSocket opened', wsUrl);
+        };
+
         ws.onmessage = (ev) => {
           try {
             const msg = JSON.parse(ev.data);
@@ -86,7 +93,7 @@ export default function GamePage() {
               }
               prevHighestRef.current = newHighest;
               setGameState(newState);
-            } else if (['auction_started', 'bid_placed', 'turn_skipped', 'match_result'].includes(msg?.type)) {
+            } else if (['auction_started', 'bid_placed', 'turn_skipped', 'match_result', 'auction_state', 'timer_update'].includes(msg?.type)) {
               fetch(`${API_BASE}/session/${sid}/state`)
                 .then((r) => r.json())
                 .then((j) => {
@@ -103,19 +110,38 @@ export default function GamePage() {
             console.error('ws message parse', e);
           }
         };
-        ws.onclose = () => {
+
+        ws.onclose = (ev) => {
           setIsConnected(false);
+          console.warn('WebSocket closed', { url: wsUrl, code: (ev as CloseEvent)?.code, reason: (ev as CloseEvent)?.reason });
+
+          // If we don't have game state yet, surface a clear error to the user
+          if (!gameState) {
+            const code = (ev as CloseEvent)?.code ?? 'غير معروف';
+            const reason = (ev as CloseEvent)?.reason ?? 'لا يوجد سبب موضح';
+            setError(`اتصال WebSocket مغلق (code: ${code}). السبب: ${reason}`);
+            setLoading(false);
+          }
+
           setTimeout(() => {
             if (wsRef.current !== ws) return;
             if (sessionId) {
-              const newWs = new WebSocket(WS_PATH(WS_BASE, sessionId));
+              const newWs = new WebSocket(WS_PATH(WS_BASE, sessionId, player1));
               wsRef.current = newWs;
             }
           }, 2000);
         };
-        ws.onerror = (e) => console.error('WebSocket error', e);
+
+        ws.onerror = (ev) => {
+          console.error('WebSocket error', { url: wsUrl, event: ev });
+          const reason = (ev && (ev as any).message) ? (ev as any).message : 'خطأ في WebSocket';
+          setError(`فشل اتصال WebSocket: ${reason}`);
+          setLoading(false);
+        };
       } catch (e) {
         console.error('WS connection failed', e);
+        setError(`فشل إنشاء WebSocket: ${e instanceof Error ? e.message : String(e)}`);
+        setLoading(false);
       }
     })();
 
@@ -125,7 +151,7 @@ export default function GamePage() {
         try { wsRef.current.close(); } catch (e) {}
       }
     };
-  }, [player1, createSession, WS_BASE, API_BASE, sessionId]);
+  }, [player1, createSession, WS_BASE, API_BASE, sessionId, gameState]);
 
   useEffect(() => {
     if (!gameState) return;
@@ -355,39 +381,7 @@ export default function GamePage() {
             <div className="relative z-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
               {/* FIFA Ultimate Team Card Mock */}
               <div className="flex justify-center">
-                <div className="relative w-64 h-96 rounded-3xl bg-gradient-to-tr from-amber-600 via-yellow-200 to-amber-700 p-1 shadow-[0_20px_40px_rgba(0,0,0,0.8)] transform hover:scale-105 transition-transform duration-300">
-                  <div className="w-full h-full bg-[#0c0d12] rounded-[22px] flex flex-col justify-between p-5 border border-yellow-500/40 relative overflow-hidden">
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-amber-500/20 via-transparent to-transparent"></div>
-
-                    {/* Top Stats */}
-                    <div className="relative z-10 flex justify-between items-start">
-                      <div>
-                        <div className="text-4xl font-black text-amber-300 tracking-tighter">
-                          {card?.rating || card?.overall || '89'}
-                        </div>
-                        <div className="text-xs font-black uppercase tracking-widest text-zinc-400">
-                          {card?.display_position || card?.position || 'ST'}
-                        </div>
-                      </div>
-                      <div className="text-2xl font-extrabold text-amber-500/40">FUT</div>
-                    </div>
-
-                    {/* Center Placeholder / Icon */}
-                    <div className="relative z-10 text-center my-auto">
-                      <div className="w-24 h-24 mx-auto rounded-full border-2 border-dashed border-amber-500/30 flex items-center justify-center text-4xl mb-2">
-                        ⚽
-                      </div>
-                      <h4 className="text-xl font-black tracking-wide text-white drop-shadow-md">
-                        {card?.name ?? 'بطاقة سرية'}
-                      </h4>
-                    </div>
-
-                    {/* Card Footer */}
-                    <div className="relative z-10 pt-3 border-t border-zinc-800 text-center">
-                      <span className="text-[10px] tracking-widest uppercase text-amber-400/80 font-bold">Dual Arena Edition</span>
-                    </div>
-                  </div>
-                </div>
+                <div className="relative w-64 h-96 rounded-3xl bg-gradient-to-tr from-amber-600 via-yellow-200 to-amber-700 p-1 shadow-[0_20px_40px_rgba(0,0,0,0.8)] transform hover:scale-105 tran[...]" />
               </div>
 
               {/* Price & Action Section */}
@@ -408,7 +402,7 @@ export default function GamePage() {
                         key={amt}
                         onClick={() => quickBid(amt)}
                         disabled={!isMyTurn}
-                        className="py-2.5 rounded-xl border border-zinc-700/80 bg-zinc-900/60 hover:bg-amber-400 hover:text-black hover:border-amber-400 font-bold transition-all duration-200 active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+                        className="py-2.5 rounded-xl border border-zinc-700/80 bg-zinc-900/60 hover:bg-amber-400 hover:text-black hover:border-amber-400 font-bold transition-all duration-200 acti[...]"
                       >
                         +{amt}M
                       </button>
@@ -430,7 +424,7 @@ export default function GamePage() {
                     <button
                       onClick={onConfirmBid}
                       disabled={!isMyTurn}
-                      className="px-6 py-3 rounded-xl font-black bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_#10b98140] transition-all duration-200 active:scale-95 disabled:opacity-30 disabled:pointer-events-none whitespace-nowrap"
+                      className="px-6 py-3 rounded-xl font-black bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_#10b98140] transition-all duration-200 active:scale-95 disabled:op[...]"
                     >
                       مزايدة
                     </button>
@@ -439,7 +433,7 @@ export default function GamePage() {
                   <button
                     onClick={doSkip}
                     disabled={!isMyTurn}
-                    className="w-full py-2.5 rounded-xl font-bold bg-zinc-900/80 hover:bg-rose-950/50 hover:text-rose-400 border border-zinc-800 hover:border-rose-800 transition-all duration-200 active:scale-95 disabled:opacity-30 disabled:pointer-events-none text-zinc-400"
+                    className="w-full py-2.5 rounded-xl font-bold bg-zinc-900/80 hover:bg-rose-950/50 hover:text-rose-400 border border-zinc-800 hover:border-rose-800 transition-all duration-200 [...]"
                   >
                     تخطي الدور (Skip)
                   </button>
